@@ -1,0 +1,114 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FastTorrentDownload.ViewModels"
+        x:Class="FastTorrentDownload.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="fast torrent download"
+        Width="1180" Height="760"
+        MinWidth="880" MinHeight="600"
+        ShowInTaskbar="True"
+        Background="{DynamicResource WindowBackgroundBrush}">
+  <Window.Styles>
+    <Style Selector="Button">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="{DynamicResource PrimaryButtonBackgroundBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource PrimaryButtonForegroundBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource PrimaryButtonBackgroundBrush}" />
+    </Style>
+    <Style Selector="Button.theme-toggle">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource HeaderForegroundBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource HeaderForegroundBrush}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.theme-toggle.selected">
+      <Setter Property="Background" Value="{DynamicResource HeaderForegroundBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource HeaderBackgroundBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource HeaderForegroundBrush}" />
+    </Style>
+    <Style Selector="ListBoxItem">
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0,0,0,8" />
+    </Style>
+  </Window.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Grid.Row="0" Background="{DynamicResource HeaderBackgroundBrush}" Padding="28,20">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="14">
+          <Border Width="42" Height="42" Background="{DynamicResource HeaderForegroundBrush}"
+                  VerticalAlignment="Center">
+            <TextBlock Text="↓" FontSize="30" FontWeight="Bold" HorizontalAlignment="Center"
+                       VerticalAlignment="Center" Foreground="{DynamicResource HeaderBackgroundBrush}" />
+          </Border>
+          <StackPanel Spacing="2" VerticalAlignment="Center">
+            <TextBlock Text="fast torrent download" FontSize="24" FontWeight="Bold"
+                       Foreground="{DynamicResource HeaderForegroundBrush}" />
+            <TextBlock Text="A local-first Windows BitTorrent client" Opacity="0.9"
+                       Foreground="{DynamicResource HeaderMutedBrush}" />
+          </StackPanel>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button x:Name="DarkThemeButton" Classes="theme-toggle" Content="Dark" Click="DarkTheme_Click" />
+          <Button x:Name="LightThemeButton" Classes="theme-toggle" Content="Light" Click="LightTheme_Click" />
+          <Button Content="Check update" Click="Update_Click" Foreground="{DynamicResource HeaderForegroundBrush}"
+                  BorderBrush="{DynamicResource HeaderForegroundBrush}" />
+          <Button Content="Settings" Click="Settings_Click" Foreground="{DynamicResource HeaderForegroundBrush}"
+                  BorderBrush="{DynamicResource HeaderForegroundBrush}" />
+          <Button Classes="primary" Content="+ Add torrent" Click="Add_Click"
+                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                  BorderBrush="{DynamicResource PrimaryButtonBackgroundBrush}" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" RowDefinitions="Auto,*" Margin="28,22,28,14">
+      <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,16">
+        <StackPanel Orientation="Horizontal" Spacing="18">
+          <TextBlock Text="{Binding QueueSummary}" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding TotalDownloadRate}" FontFamily="Consolas" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding TotalUploadRate}" FontFamily="Consolas" VerticalAlignment="Center" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+          <Button Content="Resume" Click="Resume_Click" />
+          <Button Content="Pause" Click="Pause_Click" />
+          <Button Content="Recheck" Click="Recheck_Click" />
+          <Button Content="Show folder" Click="Folder_Click" />
+          <Button Content="Remove" Click="Remove_Click" />
+        </StackPanel>
+      </Grid>
+
+      <ListBox Grid.Row="1" ItemsSource="{Binding Torrents}" SelectedItem="{Binding SelectedTorrent, Mode=TwoWay}"
+               BorderThickness="0" Background="Transparent">
+        <ListBox.ItemTemplate>
+          <DataTemplate DataType="vm:TorrentRowViewModel">
+            <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="1" Padding="18">
+              <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="9">
+                <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="16" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="1" Text="{Binding State}" FontFamily="Consolas" Opacity="0.75" />
+                <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding Progress}" Height="8" />
+                <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="16">
+                  <TextBlock Text="{Binding ProgressLabel}" FontFamily="Consolas" FontWeight="SemiBold" />
+                  <TextBlock Grid.Column="1" Text="{Binding TransferLabel}" FontFamily="Consolas" />
+                  <TextBlock Grid.Column="2" Text="{Binding DetailLabel}" Opacity="0.72" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="3" Text="{Binding Destination}" Opacity="0.55" TextTrimming="CharacterEllipsis" MaxWidth="240" />
+                </Grid>
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Grid>
+
+    <Border Grid.Row="2" BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="0,1,0,0" Padding="28,12">
+      <TextBlock Text="{Binding StatusMessage}" TextTrimming="CharacterEllipsis" Opacity="0.8" />
+    </Border>
+  </Grid>
+</Window>

@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Build and check
+        shell: pwsh
+        run: |
+          dotnet build FastTorrentDownload.sln --configuration Release --nologo
+          dotnet run --project tests/FastTorrentDownload.Tests/FastTorrentDownload.Tests.csproj --configuration Release
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+      - name: Publish portable app, checksum, and installer
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          .\scripts\Publish.ps1 -Version $version
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            Unsigned early-release binaries may trigger Microsoft SmartScreen. Verify the SHA-256 checksum before opening the portable ZIP or installer.
+          files: |
+            artifacts/*.zip
+            artifacts/*.sha256
+            artifacts/*-setup.exe
