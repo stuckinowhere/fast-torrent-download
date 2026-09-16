@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Build
+        run: dotnet build FastTorrentDownload.sln --configuration Release --nologo
+      - name: Run focused checks
+        run: dotnet run --project tests/FastTorrentDownload.Tests/FastTorrentDownload.Tests.csproj --configuration Release
