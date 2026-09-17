@@ -95,7 +95,10 @@
     </Border>
 
     <Border Grid.Row="3" Padding="28,2,28,10">
-      <TextBlock Text="© 2026 stuckinowhere" HorizontalAlignment="Left" FontSize="12" Opacity="0.6" />
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Text="© 2026 stuckinowhere" HorizontalAlignment="Left" FontSize="12" Opacity="0.6" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1" Text="{Binding AppVersionLabel}" FontSize="12" Opacity="0.6" VerticalAlignment="Center" />
+      </Grid>
     </Border>
   </Grid>
 </Window>
