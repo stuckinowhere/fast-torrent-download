@@ -292,16 +292,16 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public async Task<IReadOnlyList<TorrentSnapshot>> GetSnapshotsAsync()
+    public async Task<IReadOnlyList<TorrentSnapshot>> GetSnapshotsAsync(bool includePeerCounts = true)
     {
         var snapshots = new List<TorrentSnapshot>(_entries.Count);
-        foreach (var pair in _entries)
+        foreach (var pair in _entries.ToArray())
         {
             var manager = pair.Value.Manager;
             var monitor = manager.Monitor;
             var downloaded = monitor.DataBytesReceived;
             var uploaded = monitor.DataBytesSent;
-            var (seeders, leechers) = await CountPeersAsync(manager);
+            var (seeders, leechers) = includePeerCounts ? await CountPeersAsync(manager) : (0, 0);
             snapshots.Add(new TorrentSnapshot(
                 pair.Key,
                 string.IsNullOrWhiteSpace(manager.Name) ? "Fetching metadata…" : manager.Name,
@@ -343,7 +343,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
     public async Task EnforceRatioPolicyAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var snapshot in (await GetSnapshotsAsync()).Where(snapshot => QueueCoordinator.ShouldPauseForRatio(snapshot, _settings)))
+        foreach (var snapshot in (await GetSnapshotsAsync(includePeerCounts: false)).Where(snapshot => QueueCoordinator.ShouldPauseForRatio(snapshot, _settings)))
         {
             await PauseAsync(snapshot.Id, cancellationToken);
         }
