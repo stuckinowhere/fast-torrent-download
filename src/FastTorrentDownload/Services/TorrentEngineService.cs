@@ -48,7 +48,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
             _engine ??= new ClientEngine(CreateEngineSettings(_settings));
             await _engine.UpdateSettingsAsync(CreateEngineSettings(_settings));
-            AppLogger.Log($"Engine initialized: listen={_settings.ListenAddress}:{_settings.ListenPort} dht={_settings.EnableDht} pex={_settings.EnablePeerExchange} lpd={_settings.EnableLocalPeerDiscovery} upnp={_settings.EnablePortForwarding} restored={_engine.Torrents.Count} dhtState={_engine.Dht.State} dhtNodes={_engine.Dht.NodeCount}");
+            AppLogger.Log($"Engine initialized: listen={_settings.ListenAddress}:{_settings.ListenPort} dht={_settings.EnableDht} pex={_settings.EnablePeerExchange} lpd={_settings.EnableLocalPeerDiscovery} upnp={_settings.EnablePortForwarding} restored={_engine.Torrents.Count} dhtState={_engine.Dht.State} dhtNodes={_engine.Dht.NodeCount} tuning={EnginePerformanceTuning.MaxConnections}c/{EnginePerformanceTuning.MaxHalfOpenConnections}half/{EnginePerformanceTuning.MaxConnectionsPerTorrent}pt");
 
             foreach (var manager in _engine.Torrents)
             {
@@ -375,7 +375,11 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 ["ipv4"] = new(listenAddress, settings.ListenPort)
             },
             MaximumDownloadRate = ToBytesPerSecond(settings.MaximumDownloadKiBPerSecond),
-            MaximumUploadRate = ToBytesPerSecond(settings.MaximumUploadKiBPerSecond)
+            MaximumUploadRate = ToBytesPerSecond(settings.MaximumUploadKiBPerSecond),
+            MaximumConnections = EnginePerformanceTuning.MaxConnections,
+            MaximumHalfOpenConnections = EnginePerformanceTuning.MaxHalfOpenConnections,
+            DiskCacheBytes = EnginePerformanceTuning.DiskCacheBytes,
+            WebSeedDelay = EnginePerformanceTuning.WebSeedDelay
         };
         return builder.ToSettings();
     }
@@ -385,6 +389,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         AllowDht = settings.EnableDht,
         AllowPeerExchange = settings.EnablePeerExchange,
         CreateContainingDirectory = true,
+        MaximumConnections = EnginePerformanceTuning.MaxConnectionsPerTorrent,
         MaximumDownloadRate = ToBytesPerSecond(settings.MaximumDownloadKiBPerSecond),
         MaximumUploadRate = ToBytesPerSecond(settings.MaximumUploadKiBPerSecond)
     }.ToSettings();

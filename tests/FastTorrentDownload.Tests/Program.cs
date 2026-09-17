@@ -111,6 +111,17 @@ Check("update parses coreutils checksum files", () =>
     Require(AppUpdateService.ParseChecksumFile("not-a-hash  update-portable.zip\n", "update-portable.zip") is null);
 });
 
+Check("engine tuning stays above library defaults for faster swarms", () =>
+{
+    Require(EnginePerformanceTuning.MaxConnections == 500);
+    Require(EnginePerformanceTuning.MaxHalfOpenConnections == 50);
+    Require(EnginePerformanceTuning.MaxConnectionsPerTorrent == 100);
+    Require(EnginePerformanceTuning.DiskCacheBytes == 32 * 1024 * 1024);
+    Require(EnginePerformanceTuning.WebSeedDelay == TimeSpan.FromSeconds(15));
+    Require(EnginePerformanceTuning.MaxConnectionsPerTorrent <= EnginePerformanceTuning.MaxConnections);
+    Require(EnginePerformanceTuning.MaxHalfOpenConnections <= EnginePerformanceTuning.MaxConnections);
+});
+
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 
