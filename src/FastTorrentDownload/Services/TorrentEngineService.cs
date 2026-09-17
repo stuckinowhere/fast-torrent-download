@@ -53,6 +53,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             foreach (var manager in _engine.Torrents)
             {
                 Track(manager, "Restored download");
+                await manager.UpdateSettingsAsync(CreateTorrentSettings(_settings));
             }
         }
         finally
@@ -279,6 +280,10 @@ public sealed class TorrentEngineService : IAsyncDisposable
             if (_engine is not null)
             {
                 await _engine.UpdateSettingsAsync(CreateEngineSettings(_settings));
+                foreach (var manager in _engine.Torrents)
+                {
+                    await manager.UpdateSettingsAsync(CreateTorrentSettings(_settings));
+                }
             }
         }
         finally
