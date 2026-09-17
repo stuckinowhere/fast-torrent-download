@@ -5,11 +5,16 @@
   <StackPanel Margin="24" Spacing="16">
     <TextBlock Text="A new version is ready" FontSize="20" FontWeight="Bold" />
     <TextBlock x:Name="DescriptionTextBlock" TextWrapping="Wrap" />
-    <TextBlock Text="Opening the release page lets you review the notes and checksum before downloading." TextWrapping="Wrap" Opacity="0.7" />
+    <TextBlock Text="Nothing is downloaded until you click Install. The checksum is verified before anything is replaced, then the app restarts on the new version." TextWrapping="Wrap" Opacity="0.7" />
+    <StackPanel x:Name="ProgressPanel" Spacing="8" IsVisible="False">
+      <ProgressBar x:Name="DownloadProgressBar" Minimum="0" Maximum="100" Height="8" />
+      <TextBlock x:Name="StatusTextBlock" Opacity="0.8" TextWrapping="Wrap" />
+    </StackPanel>
+    <TextBlock x:Name="ErrorTextBlock" Foreground="#C62828" TextWrapping="Wrap" IsVisible="False" />
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
-      <Button Content="Later" Click="Later_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="160"
+      <Button x:Name="LaterButton" Content="Later" Click="Later_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="160"
               HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
-      <Button Classes="primary" Content="Open release page" Click="Open_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="160"
+      <Button x:Name="InstallButton" Classes="primary" Content="Install update" Click="Install_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="160"
               HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
     </StackPanel>
   </StackPanel>

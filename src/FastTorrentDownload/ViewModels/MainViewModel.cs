@@ -29,6 +29,15 @@ public sealed partial class MainViewModel(
 
     public AppSettings Settings => _settings;
 
+    public string AppVersionLabel
+    {
+        get
+        {
+            var version = typeof(MainViewModel).Assembly.GetName().Version ?? new Version(0, 1, 0);
+            return $"v{version.Major}.{version.Minor}.{version.Build}";
+        }
+    }
+
     public async Task InitializeAsync()
     {
         _settings = await _settingsStore.LoadAsync();
@@ -36,7 +45,7 @@ public sealed partial class MainViewModel(
         await _engine.InitializeAsync(_settings);
         await RefreshAsync();
         StatusMessage = "Ready — add a magnet link or .torrent file.";
-        _ = CheckForUpdatesAsync(quiet: true);
+        // Update prompts are driven by the main window so a dialog can be shown.
     }
 
     public Task<TorrentAddPreview> PrepareAddAsync(string source, string? destination, CancellationToken cancellationToken = default) =>

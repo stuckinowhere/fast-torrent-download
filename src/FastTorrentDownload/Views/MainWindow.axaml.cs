@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private bool _allowClose;
     private bool _shutdownStarted;
     private bool _exitRequested;
+    private bool _skipExitConfirmation;
 
     public MainWindow(MainViewModel viewModel)
     {
@@ -32,6 +33,7 @@ public partial class MainWindow : Window
         {
             await _viewModel.InitializeAsync();
             _refreshTimer.Start();
+            await ShowUpdateDialogIfAvailableAsync(quiet: true);
         }
         catch (Exception exception)
         {
@@ -153,18 +155,26 @@ public partial class MainWindow : Window
         _viewModel.SetTheme(next);
     }
 
-    private async void Update_Click(object? sender, RoutedEventArgs eventArgs)
+    private async void Update_Click(object? sender, RoutedEventArgs eventArgs) =>
+        await ShowUpdateDialogIfAvailableAsync(quiet: false);
+
+    private async Task ShowUpdateDialogIfAvailableAsync(bool quiet)
     {
-        var update = await _viewModel.CheckForUpdatesAsync(quiet: false);
+        var update = await _viewModel.CheckForUpdatesAsync(quiet);
         if (update is null)
         {
+            if (!quiet)
+            {
+                await new UpToDateWindow(_viewModel.AppVersionLabel) { Icon = Icon }.ShowDialog<bool>(this);
+            }
+
             return;
         }
 
-        var shouldOpen = await new UpdateAvailableWindow(update) { Icon = Icon }.ShowDialog<bool>(this);
-        if (shouldOpen)
+        var installed = await new UpdateAvailableWindow(update, new Services.AppUpdateService()) { Icon = Icon }.ShowDialog<bool>(this);
+        if (installed)
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(update.ReleasePage.ToString()) { UseShellExecute = true });
+            ExitForUpdate();
         }
     }
 
@@ -197,6 +207,16 @@ public partial class MainWindow : Window
         }
     }
 
+    public void ExitForUpdate()
+    {
+        _exitRequested = true;
+        _skipExitConfirmation = true;
+        _viewModel.StatusMessage = "Installing update — the app will restart.";
+        Show();
+        Activate();
+        Close();
+    }
+
     public void RequestExit()
     {
         _exitRequested = true;
@@ -226,7 +246,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_viewModel.Settings.ConfirmCloseBeforeExit)
+        if (_viewModel.Settings.ConfirmCloseBeforeExit && !_skipExitConfirmation)
         {
             var choice = await new ExitConfirmationWindow() { Icon = Icon }.ShowDialog<ExitChoice?>(this);
             if (choice is null)

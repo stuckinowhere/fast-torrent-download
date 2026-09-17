@@ -76,6 +76,38 @@ Check("dht bootstrap nodes use flat 26-byte compact layout", () =>
     Require(compact[24] == 0x1A && compact[25] == 0xE1);
 });
 
+Check("update picks the portable zip plus its checksum from release assets", () =>
+{
+    var assets = new[]
+    {
+        new ReleaseAsset("fast-torrent-download-0.2.0-win-x64-setup.exe", new Uri("https://github.com/o/r/releases/download/v0.2.0/fast-torrent-download-0.2.0-win-x64-setup.exe")),
+        new ReleaseAsset("fast-torrent-download-0.2.0-win-x64-portable.zip", new Uri("https://github.com/o/r/releases/download/v0.2.0/fast-torrent-download-0.2.0-win-x64-portable.zip")),
+        new ReleaseAsset("fast-torrent-download-0.2.0-win-x64-portable.zip.sha256", new Uri("https://github.com/o/r/releases/download/v0.2.0/fast-torrent-download-0.2.0-win-x64-portable.zip.sha256")),
+    };
+    var selected = ReleaseUpdateService.SelectPackage(assets);
+    Require(selected is not null);
+    Require(selected.Value.PackageUrl.AbsolutePath.EndsWith("-portable.zip"));
+    Require(selected.Value.ChecksumUrl.AbsolutePath.EndsWith("-portable.zip.sha256"));
+    Require(ReleaseUpdateService.SelectPackage(assets[..1]) is null);
+});
+
+Check("update rejects non-https and off-github download hosts", () =>
+{
+    Require(ReleaseUpdateService.IsDownloadHost(new Uri("https://github.com/o/r/download/x.zip")));
+    Require(ReleaseUpdateService.IsDownloadHost(new Uri("https://objects.githubusercontent.com/abc123")));
+    Require(!ReleaseUpdateService.IsDownloadHost(new Uri("http://github.com/o/r/download/x.zip")));
+    Require(!ReleaseUpdateService.IsDownloadHost(new Uri("https://evil.example.com/x.zip")));
+});
+
+Check("update parses coreutils checksum files", () =>
+{
+    const string hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    Require(AppUpdateService.ParseChecksumFile($"{hash}  update-portable.zip\n", "update-portable.zip") == hash);
+    Require(AppUpdateService.ParseChecksumFile($"{hash} *update-portable.zip\n", "update-portable.zip") == hash);
+    Require(AppUpdateService.ParseChecksumFile($"{hash}  other.zip\n", "update-portable.zip") is null);
+    Require(AppUpdateService.ParseChecksumFile("not-a-hash  update-portable.zip\n", "update-portable.zip") is null);
+});
+
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 
