@@ -85,9 +85,12 @@ Check("update picks the portable zip plus its checksum from release assets", () 
         new ReleaseAsset("fast-torrent-download-0.2.0-win-x64-portable.zip.sha256", new Uri("https://github.com/o/r/releases/download/v0.2.0/fast-torrent-download-0.2.0-win-x64-portable.zip.sha256")),
     };
     var selected = ReleaseUpdateService.SelectPackage(assets);
-    Require(selected is not null);
-    Require(selected.Value.PackageUrl.AbsolutePath.EndsWith("-portable.zip"));
-    Require(selected.Value.ChecksumUrl.AbsolutePath.EndsWith("-portable.zip.sha256"));
+    if (selected is not { } package)
+    {
+        throw new InvalidOperationException("Expected a package and checksum pair.");
+    }
+    Require(package.PackageUrl.AbsolutePath.EndsWith("-portable.zip"));
+    Require(package.ChecksumUrl.AbsolutePath.EndsWith("-portable.zip.sha256"));
     Require(ReleaseUpdateService.SelectPackage(assets[..1]) is null);
 });
 
