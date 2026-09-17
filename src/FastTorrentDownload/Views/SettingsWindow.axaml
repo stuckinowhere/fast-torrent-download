@@ -1,8 +1,8 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="FastTorrentDownload.Views.SettingsWindow"
-        Title="Settings" Width="670" Height="680" ShowInTaskbar="False"
-        MinWidth="560" MinHeight="540"
+        Title="Settings" Width="1180" Height="760" ShowInTaskbar="False"
+        MinWidth="880" MinHeight="600"
         WindowStartupLocation="CenterOwner">
   <Grid Margin="24" RowDefinitions="*,Auto" RowSpacing="18">
     <ScrollViewer Padding="0,0,12,0">

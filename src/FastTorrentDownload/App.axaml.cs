@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Platform;
 using CommunityToolkit.Mvvm.Input;
 using FastTorrentDownload.Services;
 using FastTorrentDownload.ViewModels;
@@ -64,6 +65,15 @@ public partial class App : Application
 
     private static WindowIcon CreateAppIcon()
     {
+        try
+        {
+            using var asset = AssetLoader.Open(new Uri("avares://FastTorrentDownload/Assets/app.png"));
+            return new WindowIcon(asset);
+        }
+        catch
+        {
+            // Fall back to the embedded bitmap below.
+        }
         const string pngBase64 =
             "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAASUlEQVR4nO3WMQoAMAgEwfv/p02fJokiGtkDS2VACyXJigsAAF/jHgAAAAAAMB/wGgDzALeQtCMEcIJ45wDo/5ZH8z+gfAXZtQAzgOZgXcu3jQAAAABJRU5ErkJggg==";
         return new WindowIcon(new MemoryStream(Convert.FromBase64String(pngBase64)));
