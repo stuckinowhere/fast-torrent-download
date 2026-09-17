@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using FastTorrentDownload.Models;
 using MonoTorrent;
@@ -32,6 +33,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             _settings = settings.Copy();
             _settings.Normalize();
             _paths.EnsureDirectories();
+            await DhtBootstrapCache.EnsureSeededAsync(_paths.CacheDirectory, cancellationToken);
             if (File.Exists(_paths.EngineStateFile))
             {
                 try
@@ -46,6 +48,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
             _engine ??= new ClientEngine(CreateEngineSettings(_settings));
             await _engine.UpdateSettingsAsync(CreateEngineSettings(_settings));
+            AppLogger.Log($"Engine initialized: listen={_settings.ListenAddress}:{_settings.ListenPort} dht={_settings.EnableDht} pex={_settings.EnablePeerExchange} lpd={_settings.EnableLocalPeerDiscovery} upnp={_settings.EnablePortForwarding} restored={_engine.Torrents.Count} dhtState={_engine.Dht.State} dhtNodes={_engine.Dht.NodeCount}");
 
             foreach (var manager in _engine.Torrents)
             {
@@ -69,13 +72,22 @@ public sealed class TorrentEngineService : IAsyncDisposable
             engine = RequireEngine();
             var safeSource = PathGuard.ResolveTorrentSource(source);
             safeDestination = PathGuard.ResolveDestination(_settings.DefaultDownloadFolder, destination);
-            manager = await engine.AddAsync(safeSource, safeDestination, CreateTorrentSettings(_settings));
+            manager = safeSource.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase)
+                ? await engine.AddAsync(MagnetLink.Parse(safeSource), safeDestination, CreateTorrentSettings(_settings))
+                : await engine.AddAsync(Torrent.Load(safeSource), safeDestination, CreateTorrentSettings(_settings));
         }
         finally
         {
             _gate.Release();
         }
 
+        var stopwatch = Stopwatch.StartNew();
+        var kind = source.TrimStart().StartsWith("magnet:", StringComparison.OrdinalIgnoreCase) ? "magnet" : "file";
+        AppLogger.Log($"PrepareAdd start kind={kind} hash={manager.InfoHashes} dest={safeDestination} dhtState={engine.Dht.State} dhtNodes={engine.Dht.NodeCount}");
+        EventHandler<PeersAddedEventArgs> peersHandler = (_, e) => AppLogger.Log($"PrepareAdd: peers found new={e.NewPeers} known={e.ExistingPeers}");
+        EventHandler<TorrentStateChangedEventArgs> stateHandler = (_, e) => AppLogger.Log($"PrepareAdd: pending state {e.OldState} -> {e.NewState}");
+        manager.PeersFound += peersHandler;
+        manager.TorrentStateChanged += stateHandler;
         try
         {
             if (!manager.HasMetadata)
@@ -83,9 +95,28 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 await manager.StartAsync();
                 try
                 {
-                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    timeout.CancelAfter(TimeSpan.FromSeconds(60));
-                    await manager.WaitForMetadataAsync(timeout.Token);
+                    // No fixed timeout: thin swarms can take several minutes of DHT
+                    // sampling before a metadata holder is found (uTorrent waits
+                    // indefinitely too). The caller cancels via the token — the file
+                    // picker wires its Cancel button and window close to it.
+                    using var snapshots = new CancellationTokenSource();
+                    var snapshotTask = SnapshotFetchAsync(manager, engine, stopwatch, snapshots.Token);
+                    try
+                    {
+                        await manager.WaitForMetadataAsync(cancellationToken);
+                    }
+                    finally
+                    {
+                        snapshots.Cancel();
+                        try
+                        {
+                            await snapshotTask;
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Expected when the fetch finishes or is cancelled.
+                        }
+                    }
                 }
                 finally
                 {
@@ -104,15 +135,44 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 _gate.Release();
             }
 
+            AppLogger.Log($"PrepareAdd done in {stopwatch.Elapsed:mm\\:ss} files={manager.Files.Count}");
             return new TorrentAddPreview(
                 id,
                 string.IsNullOrWhiteSpace(manager.Name) ? "Torrent" : manager.Name,
                 manager.Files.Select(file => new TorrentFilePreview(file.Path, file.Length)).ToArray());
         }
-        catch
+        catch (Exception exception)
         {
+            AppLogger.LogException($"PrepareAdd failed after {stopwatch.Elapsed:mm\\:ss}", exception);
             await engine!.RemoveAsync(manager);
             throw;
+        }
+        finally
+        {
+            manager.PeersFound -= peersHandler;
+            manager.TorrentStateChanged -= stateHandler;
+        }
+    }
+
+    private static async Task SnapshotFetchAsync(TorrentManager manager, ClientEngine engine, Stopwatch stopwatch, CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+            var detail = "peers=?";
+            try
+            {
+                var peers = await manager.GetPeersAsync();
+                var shown = peers.Take(5).Select(peer =>
+                    $"{peer.Uri.Host}:{peer.Uri.Port} {peer.ClientApp} seeder={peer.IsSeeder} lt={peer.SupportsLTMessages} dir={peer.ConnectionDirection} enc={peer.EncryptionType}");
+                detail = $"peers={peers.Count} open={manager.OpenConnections} [{string.Join("; ", shown)}]";
+            }
+            catch
+            {
+                // A snapshot must never break the fetch.
+            }
+
+            AppLogger.Log($"fetch t+{stopwatch.Elapsed:mm\\:ss} metadata={manager.HasMetadata} state={manager.State} {detail} dht={engine.Dht.State} nodes={engine.Dht.NodeCount}");
         }
     }
 

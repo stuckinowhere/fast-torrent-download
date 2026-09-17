@@ -22,10 +22,10 @@ public static class PathGuard
             throw new ArgumentException("Paste a magnet link or select a .torrent file.", nameof(source));
         }
 
-        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) &&
-            string.Equals(uri.Scheme, "magnet", StringComparison.OrdinalIgnoreCase))
+        var trimmed = source.Trim();
+        if (trimmed.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
         {
-            return source.Trim();
+            return trimmed;
         }
 
         var fullPath = Path.GetFullPath(source);

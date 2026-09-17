@@ -39,8 +39,8 @@ public sealed partial class MainViewModel(
         _ = CheckForUpdatesAsync(quiet: true);
     }
 
-    public Task<TorrentAddPreview> PrepareAddAsync(string source, string? destination) =>
-        _engine.PrepareAddAsync(source, destination);
+    public Task<TorrentAddPreview> PrepareAddAsync(string source, string? destination, CancellationToken cancellationToken = default) =>
+        _engine.PrepareAddAsync(source, destination, cancellationToken);
 
     public async Task AddAsync(TorrentAddPreview preview, IReadOnlyCollection<string> selectedFiles, bool startImmediately)
     {

@@ -36,16 +36,52 @@ public sealed partial class TorrentFileSelectionItem : ObservableObject
 
 public partial class SelectTorrentFilesWindow : Window
 {
-    public SelectTorrentFilesWindow(TorrentAddPreview preview)
+    public SelectTorrentFilesWindow(string torrentName)
     {
-        TorrentName = preview.Name;
-        Files = new ObservableCollection<TorrentFileSelectionItem>(preview.Files.Select(file => new TorrentFileSelectionItem(file)));
+        TorrentName = torrentName;
+        Files = new ObservableCollection<TorrentFileSelectionItem>();
         DataContext = this;
         InitializeComponent();
     }
 
     public string TorrentName { get; }
     public ObservableCollection<TorrentFileSelectionItem> Files { get; }
+
+    public void ShowPreview(TorrentAddPreview preview)
+    {
+        if (!IsVisible)
+        {
+            return;
+        }
+
+        Files.Clear();
+        foreach (var file in preview.Files)
+        {
+            Files.Add(new TorrentFileSelectionItem(file));
+        }
+
+        TorrentNameTextBlock.Text = preview.Name;
+        LoadingPanel.IsVisible = false;
+        FilesListBox.IsVisible = true;
+        SelectAllButton.IsEnabled = true;
+        SelectNoneButton.IsEnabled = true;
+        AddSelectedButton.IsEnabled = true;
+    }
+
+    public void FailAndClose(string message)
+    {
+        if (!IsVisible)
+        {
+            return;
+        }
+
+        StatusTextBlock.Text = message;
+        StatusTextBlock.IsVisible = true;
+        Close(null);
+    }
+
+    private void Cancel_Click(object? sender, RoutedEventArgs eventArgs) => Close(null);
+
     private void SelectAll_Click(object? sender, RoutedEventArgs eventArgs)
     {
         foreach (var file in Files)

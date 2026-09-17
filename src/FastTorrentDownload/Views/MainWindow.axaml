@@ -7,31 +7,14 @@
         Width="1180" Height="760"
         MinWidth="880" MinHeight="600"
         ShowInTaskbar="True"
+        DragDrop.AllowDrop="True" DragDrop.Drop="Drop_Handle"
         Background="{DynamicResource WindowBackgroundBrush}">
   <Window.Styles>
-    <Style Selector="Button">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="Padding" Value="14,8" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="CornerRadius" Value="0" />
-    </Style>
-    <Style Selector="Button.primary">
-      <Setter Property="Background" Value="{DynamicResource PrimaryButtonBackgroundBrush}" />
-      <Setter Property="Foreground" Value="{DynamicResource PrimaryButtonForegroundBrush}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource PrimaryButtonBackgroundBrush}" />
-    </Style>
     <Style Selector="Button.theme-toggle">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="Foreground" Value="{DynamicResource HeaderForegroundBrush}" />
       <Setter Property="BorderBrush" Value="{DynamicResource HeaderForegroundBrush}" />
       <Setter Property="FontWeight" Value="SemiBold" />
-    </Style>
-    <Style Selector="Button.theme-toggle.selected">
-      <Setter Property="Background" Value="{DynamicResource HeaderForegroundBrush}" />
-      <Setter Property="Foreground" Value="{DynamicResource HeaderBackgroundBrush}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource HeaderForegroundBrush}" />
     </Style>
     <Style Selector="ListBoxItem">
       <Setter Property="Padding" Value="0" />
@@ -39,7 +22,7 @@
     </Style>
   </Window.Styles>
 
-  <Grid RowDefinitions="Auto,*,Auto">
+  <Grid RowDefinitions="Auto,*,Auto,Auto">
     <Border Grid.Row="0" Background="{DynamicResource HeaderBackgroundBrush}" Padding="28,20">
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Orientation="Horizontal" Spacing="14">
@@ -56,13 +39,13 @@
           </StackPanel>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-          <Button x:Name="DarkThemeButton" Classes="theme-toggle" Content="Dark" Click="DarkTheme_Click" />
-          <Button x:Name="LightThemeButton" Classes="theme-toggle" Content="Light" Click="LightTheme_Click" />
+          <Button x:Name="ThemeToggleButton" Classes="theme-toggle" Content="&#x263E;"
+                  Click="ThemeToggle_Click" ToolTip.Tip="Toggle dark/light theme" />
           <Button Content="Check update" Click="Update_Click" Foreground="{DynamicResource HeaderForegroundBrush}"
                   BorderBrush="{DynamicResource HeaderForegroundBrush}" />
           <Button Content="Settings" Click="Settings_Click" Foreground="{DynamicResource HeaderForegroundBrush}"
                   BorderBrush="{DynamicResource HeaderForegroundBrush}" />
-          <Button Classes="primary" Content="+ Add torrent" Click="Add_Click"
+          <Button Classes="primary" Content="+ Add torrent" Click="Add_Click" Padding="14,8" MinHeight="0"
                   HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                   BorderBrush="{DynamicResource PrimaryButtonBackgroundBrush}" />
         </StackPanel>
@@ -109,6 +92,10 @@
 
     <Border Grid.Row="2" BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="0,1,0,0" Padding="28,12">
       <TextBlock Text="{Binding StatusMessage}" TextTrimming="CharacterEllipsis" Opacity="0.8" />
+    </Border>
+
+    <Border Grid.Row="3" Padding="28,2,28,10">
+      <TextBlock Text="© 2026 stuckinowhere" HorizontalAlignment="Left" FontSize="12" Opacity="0.6" />
     </Border>
   </Grid>
 </Window>

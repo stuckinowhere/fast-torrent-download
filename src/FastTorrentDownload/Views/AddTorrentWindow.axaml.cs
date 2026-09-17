@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 
@@ -40,6 +41,22 @@ public partial class AddTorrentWindow : Window
         if (folders.Count > 0)
         {
             DestinationTextBox.Text = folders[0].TryGetLocalPath() ?? folders[0].Path.LocalPath;
+        }
+    }
+
+    private async void Drop_Handle(object? sender, DragEventArgs e)
+    {
+        if (e.DataTransfer is not IAsyncDataTransfer transfer)
+        {
+            return;
+        }
+
+        var files = await transfer.TryGetFilesAsync();
+        var path = files?.Select(file => file.TryGetLocalPath()).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p));
+        var text = (string.IsNullOrWhiteSpace(path) ? await transfer.TryGetTextAsync() : path) ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            SourceTextBox.Text = text.Trim();
         }
     }
 

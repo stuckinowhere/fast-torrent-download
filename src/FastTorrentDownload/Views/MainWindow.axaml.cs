@@ -1,5 +1,7 @@
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using FastTorrentDownload.Models;
 using FastTorrentDownload.ViewModels;
@@ -12,6 +14,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private bool _allowClose;
     private bool _shutdownStarted;
+    private bool _exitRequested;
 
     public MainWindow(MainViewModel viewModel)
     {
@@ -21,7 +24,6 @@ public partial class MainWindow : Window
         Opened += OnOpened;
         Closing += OnClosing;
         _refreshTimer.Tick += OnRefreshTick;
-        UpdateThemeButtons(_viewModel.Settings.Theme);
     }
 
     private async void OnOpened(object? sender, EventArgs eventArgs)
@@ -29,7 +31,6 @@ public partial class MainWindow : Window
         try
         {
             await _viewModel.InitializeAsync();
-            UpdateThemeButtons(_viewModel.Settings.Theme);
             _refreshTimer.Start();
         }
         catch (Exception exception)
@@ -42,36 +43,100 @@ public partial class MainWindow : Window
 
     private async void Add_Click(object? sender, RoutedEventArgs eventArgs)
     {
-        var request = await new AddTorrentWindow(_viewModel.Settings.DefaultDownloadFolder).ShowDialog<AddTorrentRequest?>(this);
+        var request = await new AddTorrentWindow(_viewModel.Settings.DefaultDownloadFolder) { Icon = Icon }.ShowDialog<AddTorrentRequest?>(this);
         if (request is null)
         {
             return;
         }
 
+        await AddTorrentAsync(request);
+    }
+
+    private async void Drop_Handle(object? sender, DragEventArgs e)
+    {
+        if (e.DataTransfer is not IAsyncDataTransfer transfer)
+        {
+            return;
+        }
+
+        var files = await transfer.TryGetFilesAsync();
+        var path = files?.Select(file => file.TryGetLocalPath()).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p));
+        var source = (string.IsNullOrWhiteSpace(path) ? await transfer.TryGetTextAsync() : path) ?? string.Empty;
+        var trimmed = source.Trim();
+        var isMagnet = trimmed.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase);
+        if (!isMagnet && !string.Equals(Path.GetExtension(trimmed), ".torrent", StringComparison.OrdinalIgnoreCase))
+        {
+            _viewModel.StatusMessage = "Drop a .torrent file here, or add a magnet link.";
+            return;
+        }
+
+        await AddTorrentAsync(new AddTorrentRequest(trimmed, null, StartImmediately: true));
+    }
+
+    private async Task AddTorrentAsync(AddTorrentRequest request)
+    {
+        using var fetch = new CancellationTokenSource();
+        var previewTask = _viewModel.PrepareAddAsync(request.Source, request.Destination, fetch.Token);
+        var picker = new SelectTorrentFilesWindow(PendingTorrentName(request.Source)) { Icon = Icon };
+        picker.Closed += (_, _) => fetch.Cancel();
+        var dialogTask = picker.ShowDialog<string[]?>(this);
+
         TorrentAddPreview? preview = null;
+        string? loadError = null;
         try
         {
-            _viewModel.StatusMessage = "Preparing torrent files…";
-            preview = await _viewModel.PrepareAddAsync(request.Source, request.Destination);
-            var selectedFiles = await new SelectTorrentFilesWindow(preview).ShowDialog<string[]?>(this);
-            if (selectedFiles is null)
+            preview = await previewTask;
+        }
+        catch (Exception exception)
+        {
+            if (fetch.IsCancellationRequested || exception is OperationCanceledException)
             {
-                await _viewModel.CancelAddAsync(preview.Id);
                 _viewModel.StatusMessage = "Add cancelled.";
                 return;
             }
 
-            await _viewModel.AddAsync(preview, selectedFiles, request.StartImmediately);
+            loadError = exception.Message;
+            picker.FailAndClose($"Could not load files: {loadError}");
         }
-        catch (Exception exception)
+
+        if (preview is not null)
+        {
+            picker.ShowPreview(preview);
+        }
+
+        var selectedFiles = await dialogTask;
+        if (selectedFiles is null || preview is null)
         {
             if (preview is not null)
             {
                 await _viewModel.CancelAddAsync(preview.Id);
             }
 
+            _viewModel.StatusMessage = loadError is null ? "Add cancelled." : $"Could not add torrent: {loadError}";
+            return;
+        }
+
+        try
+        {
+            await _viewModel.AddAsync(preview, selectedFiles, request.StartImmediately);
+        }
+        catch (Exception exception)
+        {
+            await _viewModel.CancelAddAsync(preview.Id);
             _viewModel.StatusMessage = $"Could not add torrent: {exception.Message}";
         }
+    }
+
+    private static string PendingTorrentName(string source)
+    {
+        var trimmed = source.Trim();
+        if (trimmed.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Magnet link";
+        }
+
+        var fileName = Path.GetFileName(trimmed);
+        return string.IsNullOrWhiteSpace(fileName) ? "Torrent file" : fileName;
     }
 
     private async void Resume_Click(object? sender, RoutedEventArgs eventArgs) => await RunActionAsync(_viewModel.StartSelectedAsync);
@@ -82,22 +147,10 @@ public partial class MainWindow : Window
 
     private async void Remove_Click(object? sender, RoutedEventArgs eventArgs) => await RunActionAsync(_viewModel.RemoveSelectedAsync);
 
-    private void DarkTheme_Click(object? sender, RoutedEventArgs eventArgs)
+    private void ThemeToggle_Click(object? sender, RoutedEventArgs eventArgs)
     {
-        _viewModel.SetTheme("Dark");
-        UpdateThemeButtons("Dark");
-    }
-
-    private void LightTheme_Click(object? sender, RoutedEventArgs eventArgs)
-    {
-        _viewModel.SetTheme("Light");
-        UpdateThemeButtons("Light");
-    }
-
-    private void UpdateThemeButtons(string theme)
-    {
-        DarkThemeButton.Classes.Set("selected", string.Equals(theme, "Dark", StringComparison.OrdinalIgnoreCase));
-        LightThemeButton.Classes.Set("selected", string.Equals(theme, "Light", StringComparison.OrdinalIgnoreCase));
+        var next = Avalonia.Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark ? "Light" : "Dark";
+        _viewModel.SetTheme(next);
     }
 
     private async void Update_Click(object? sender, RoutedEventArgs eventArgs)
@@ -108,7 +161,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var shouldOpen = await new UpdateAvailableWindow(update).ShowDialog<bool>(this);
+        var shouldOpen = await new UpdateAvailableWindow(update) { Icon = Icon }.ShowDialog<bool>(this);
         if (shouldOpen)
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(update.ReleasePage.ToString()) { UseShellExecute = true });
@@ -124,7 +177,6 @@ public partial class MainWindow : Window
             try
             {
                 await _viewModel.SaveSettingsAsync(settings);
-                UpdateThemeButtons(_viewModel.Settings.Theme);
             }
             catch (Exception exception)
             {
@@ -145,10 +197,26 @@ public partial class MainWindow : Window
         }
     }
 
+    public void RequestExit()
+    {
+        _exitRequested = true;
+        Show();
+        Activate();
+        Close();
+    }
+
     private async void OnClosing(object? sender, WindowClosingEventArgs eventArgs)
     {
         if (_allowClose)
         {
+            return;
+        }
+
+        if (!_exitRequested)
+        {
+            eventArgs.Cancel = true;
+            Hide();
+            _viewModel.StatusMessage = "Running in the background — right-click the tray icon to exit.";
             return;
         }
 
@@ -160,7 +228,7 @@ public partial class MainWindow : Window
 
         if (_viewModel.Settings.ConfirmCloseBeforeExit)
         {
-            var choice = await new ExitConfirmationWindow().ShowDialog<ExitChoice?>(this);
+            var choice = await new ExitConfirmationWindow() { Icon = Icon }.ShowDialog<ExitChoice?>(this);
             if (choice is null)
             {
                 return;

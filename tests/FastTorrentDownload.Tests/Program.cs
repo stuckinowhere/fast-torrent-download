@@ -1,5 +1,6 @@
 using FastTorrentDownload.Models;
 using FastTorrentDownload.Services;
+using System.Linq;
 using System.Net;
 
 var passed = 0;
@@ -43,6 +44,36 @@ Check("listener binding accepts IPv4 and rejects ambiguous inputs", () =>
     {
         // Expected: settings cannot silently turn an invalid address into an all-interface bind.
     }
+});
+
+Check("magnet links with query parameters are accepted as torrent sources", () =>
+{
+    const string magnet = "magnet:?xt=urn:btih:792b9fa5793e46c51db29f59c6a9037cf20492f4&dn=Torrentio%0A1080p";
+    Require(PathGuard.ResolveTorrentSource(magnet) == magnet);
+    Require(PathGuard.ResolveTorrentSource("  MAGNET:?xt=urn:btih:abc123  ") == "MAGNET:?xt=urn:btih:abc123");
+});
+
+Check("non-torrent paths are rejected as torrent sources", () =>
+{
+    try
+    {
+        PathGuard.ResolveTorrentSource("notes.txt");
+        throw new InvalidOperationException("Expected a non-torrent path to be rejected.");
+    }
+    catch (ArgumentException)
+    {
+        // Expected: only magnet links and existing .torrent files are accepted.
+    }
+});
+
+Check("dht bootstrap nodes use flat 26-byte compact layout", () =>
+{
+    var nodeId = Enumerable.Range(1, 20).Select(i => (byte)i).ToArray();
+    var compact = DhtBootstrapCache.ToCompactNode(IPAddress.Parse("1.2.3.4"), 6881, nodeId);
+    Require(compact.Length == 26);
+    Require(compact.Take(20).SequenceEqual(nodeId));
+    Require(compact[20] == 1 && compact[21] == 2 && compact[22] == 3 && compact[23] == 4);
+    Require(compact[24] == 0x1A && compact[25] == 0xE1);
 });
 
 Console.WriteLine($"PASS {passed} focused checks");
