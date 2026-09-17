@@ -292,15 +292,17 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public IReadOnlyList<TorrentSnapshot> GetSnapshots()
+    public async Task<IReadOnlyList<TorrentSnapshot>> GetSnapshotsAsync(bool includePeerCounts = true)
     {
-        return _entries.Select(pair =>
+        var snapshots = new List<TorrentSnapshot>(_entries.Count);
+        foreach (var pair in _entries.ToArray())
         {
             var manager = pair.Value.Manager;
             var monitor = manager.Monitor;
             var downloaded = monitor.DataBytesReceived;
             var uploaded = monitor.DataBytesSent;
-            return new TorrentSnapshot(
+            var (seeders, leechers) = includePeerCounts ? await CountPeersAsync(manager) : (0, 0);
+            snapshots.Add(new TorrentSnapshot(
                 pair.Key,
                 string.IsNullOrWhiteSpace(manager.Name) ? "Fetching metadata…" : manager.Name,
                 pair.Value.Destination,
@@ -310,13 +312,38 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 monitor.UploadRate,
                 downloaded,
                 uploaded,
-                manager.Progress >= 100);
-        }).ToArray();
+                manager.Progress >= 100,
+                seeders,
+                leechers));
+        }
+        return snapshots;
+    }
+
+    private static async Task<(int Seeders, int Leechers)> CountPeersAsync(TorrentManager manager)
+    {
+        try
+        {
+            var peers = await manager.GetPeersAsync();
+            var seeders = 0;
+            foreach (var peer in peers)
+            {
+                if (peer.IsSeeder)
+                {
+                    seeders++;
+                }
+            }
+
+            return (seeders, peers.Count - seeders);
+        }
+        catch
+        {
+            return (0, 0);
+        }
     }
 
     public async Task EnforceRatioPolicyAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var snapshot in GetSnapshots().Where(snapshot => QueueCoordinator.ShouldPauseForRatio(snapshot, _settings)))
+        foreach (var snapshot in (await GetSnapshotsAsync(includePeerCounts: false)).Where(snapshot => QueueCoordinator.ShouldPauseForRatio(snapshot, _settings)))
         {
             await PauseAsync(snapshot.Id, cancellationToken);
         }

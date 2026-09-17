@@ -142,7 +142,25 @@ public partial class MainWindow : Window
     }
 
     private async void Resume_Click(object? sender, RoutedEventArgs eventArgs) => await RunActionAsync(_viewModel.StartSelectedAsync);
-    private async void Pause_Click(object? sender, RoutedEventArgs eventArgs) => await RunActionAsync(_viewModel.PauseSelectedAsync);
+    private async void Pause_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        if (_viewModel.Torrents.Count == 0)
+        {
+            _viewModel.StatusMessage = "No torrents to pause.";
+            return;
+        }
+
+        var items = _viewModel.Torrents
+            .Select(row => new PausableTorrentItem(row.Id, row.Name, row.State))
+            .ToArray();
+        var id = await new PauseTorrentWindow(items, _viewModel.SelectedTorrent?.Id) { Icon = Icon }.ShowDialog<string?>(this);
+        if (id is null)
+        {
+            return;
+        }
+
+        await RunActionAsync(() => _viewModel.PauseTorrentAsync(id));
+    }
     private async void Recheck_Click(object? sender, RoutedEventArgs eventArgs) => await RunActionAsync(_viewModel.RecheckSelectedAsync);
 
     private void Folder_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.OpenSelectedFolder();

@@ -1,5 +1,6 @@
 using FastTorrentDownload.Models;
 using FastTorrentDownload.Services;
+using FastTorrentDownload.ViewModels;
 using System.Linq;
 using System.Net;
 
@@ -122,6 +123,14 @@ Check("engine tuning stays above library defaults for faster swarms", () =>
     Require(EnginePerformanceTuning.MaxHalfOpenConnections <= EnginePerformanceTuning.MaxConnections);
 });
 
+Check("row detail shows seeder and peer counts", () =>
+{
+    var row = new TorrentRowViewModel(Snapshot(progress: 42, downloaded: 1_000, uploaded: 500, seeders: 5, leechers: 23));
+    Require(row.DetailLabel.Contains("5 seeders") && row.DetailLabel.Contains("23 peers"));
+    row.Update(Snapshot(progress: 43, downloaded: 2_000, uploaded: 500, seeders: 6, leechers: 20));
+    Require(row.DetailLabel.Contains("6 seeders") && row.DetailLabel.Contains("20 peers"));
+});
+
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 
@@ -132,8 +141,8 @@ void Check(string name, Action action)
     Console.WriteLine($"PASS {name}");
 }
 
-static TorrentSnapshot Snapshot(double progress, long downloaded, long uploaded, string state = "Seeding") => new(
-    "test", "test", "test", state, progress, 0, 0, downloaded, uploaded, progress >= 100);
+static TorrentSnapshot Snapshot(double progress, long downloaded, long uploaded, string state = "Seeding", int seeders = 0, int leechers = 0) => new(
+    "test", "test", "test", state, progress, 0, 0, downloaded, uploaded, progress >= 100, seeders, leechers);
 
 static void Require(bool condition)
 {

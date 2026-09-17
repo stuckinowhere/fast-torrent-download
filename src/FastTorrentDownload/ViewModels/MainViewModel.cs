@@ -72,16 +72,13 @@ public sealed partial class MainViewModel(
         await RefreshAsync();
     }
 
-    public async Task PauseSelectedAsync()
+    public async Task PauseTorrentAsync(string id)
     {
-        if (SelectedTorrent is null)
-        {
-            StatusMessage = "Select a torrent first.";
-            return;
-        }
-
-        await _engine.PauseAsync(SelectedTorrent.Id);
+        await _engine.PauseAsync(id);
         await RefreshAsync();
+        var row = Torrents.FirstOrDefault(current => current.Id == id);
+        SelectedTorrent = row;
+        StatusMessage = row is null ? "Paused." : $"Paused {row.Name}.";
     }
 
     public async Task RecheckSelectedAsync()
@@ -197,7 +194,7 @@ public sealed partial class MainViewModel(
         try
         {
             await _engine.EnforceRatioPolicyAsync();
-            var snapshots = _engine.GetSnapshots();
+            var snapshots = await _engine.GetSnapshotsAsync();
             var rowsById = Torrents.ToDictionary(row => row.Id);
             foreach (var snapshot in snapshots)
             {
