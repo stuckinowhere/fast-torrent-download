@@ -31,7 +31,7 @@ jobs:
           $version = '${{ github.ref_name }}'.TrimStart('v')
           .\scripts\Publish.ps1 -Version $version
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           body: |
