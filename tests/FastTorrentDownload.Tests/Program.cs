@@ -131,6 +131,52 @@ Check("row detail shows seeder and peer counts", () =>
     Require(row.DetailLabel.Contains("6 seeders") && row.DetailLabel.Contains("20 peers"));
 });
 
+Check("show folder falls back to the default download folder when nothing is selected", () =>
+{
+    var settings = new AppSettings { DefaultDownloadFolder = Path.GetTempPath() };
+    Require(MainViewModel.ResolveFolderToOpen(null, settings) == Path.GetTempPath());
+    var missing = new AppSettings { DefaultDownloadFolder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")) };
+    Require(MainViewModel.ResolveFolderToOpen(null, missing) is null);
+    var selectedMissing = new TorrentRowViewModel(Snapshot(progress: 10, downloaded: 1, uploaded: 0));
+    Require(MainViewModel.ResolveFolderToOpen(selectedMissing, settings) is null);
+    var selected = new TorrentRowViewModel(new TorrentSnapshot("t", "t", Path.GetTempPath(), "Downloading", 10, 0, 0, 1, 0, false, 0, 0));
+    Require(MainViewModel.ResolveFolderToOpen(selected, settings) == Path.GetTempPath());
+});
+
+Check("tracker prune drops proven-empty trackers but never strands the torrent", () =>
+{
+    var empty = new Uri("udp://empty.example.com:1337/announce");
+    var full = new Uri("udp://full.example.com:1337/announce");
+    var unknown = new Uri("udp://unknown.example.com:1337/announce");
+    Require(TorrentEngineService.SelectTrackersToPrune([(empty, true, 0, 0), (full, true, 0, 5)]).SequenceEqual([empty]));
+    Require(TorrentEngineService.SelectTrackersToPrune([(empty, true, 0, 0), (full, true, 0, 0)]).Count == 0);
+    Require(TorrentEngineService.SelectTrackersToPrune([(unknown, false, 0, 0), (empty, true, 0, 0)]).SequenceEqual([empty]));
+    Require(TorrentEngineService.SelectTrackersToPrune([(unknown, false, 0, 0)]).Count == 0);
+    Require(TorrentEngineService.SelectTrackersToPrune([]).Count == 0);
+});
+
+Check("tracker rotation keeps a lone connected peer instead of restarting", () =>
+{
+    Require(TorrentEngineService.ShouldRotateTrackerCoverage(0, 0));
+    Require(TorrentEngineService.ShouldRotateTrackerCoverage(1, 0));
+    Require(!TorrentEngineService.ShouldRotateTrackerCoverage(1, 1));
+    Require(!TorrentEngineService.ShouldRotateTrackerCoverage(2, 0));
+    Require(!TorrentEngineService.ShouldRotateTrackerCoverage(0, 1));
+});
+
+Check("pause intents copy and normalize without aliasing", () =>
+{
+    var settings = new AppSettings();
+    settings.PausedInfoHashes.Add("ABCDEF");
+    settings.PausedInfoHashes.Add("  ");
+    var clone = settings.Copy();
+    Require(clone.PausedInfoHashes.Contains("abcdef"));
+    clone.PausedInfoHashes.Add("123456");
+    Require(!settings.PausedInfoHashes.Contains("123456"));
+    settings.Normalize();
+    Require(settings.PausedInfoHashes.Count == 1 && settings.PausedInfoHashes.Contains("ABCDEF"));
+});
+
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 
