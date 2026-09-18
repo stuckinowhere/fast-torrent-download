@@ -4,6 +4,7 @@ using FastTorrentDownload.Models;
 using MonoTorrent;
 using MonoTorrent.Client;
 using MonoTorrent.Connections;
+using MonoTorrent.Trackers;
 
 namespace FastTorrentDownload.Services;
 
@@ -55,6 +56,9 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 Track(manager, "Restored download");
                 await manager.UpdateSettingsAsync(CreateTorrentSettings(_settings));
             }
+
+            await _engine.StartAllAsync();
+            AppLogger.Log($"Engine started: resumed {_engine.Torrents.Count} restored torrent(s).");
         }
         finally
         {
@@ -84,15 +88,18 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
         var stopwatch = Stopwatch.StartNew();
         var kind = source.TrimStart().StartsWith("magnet:", StringComparison.OrdinalIgnoreCase) ? "magnet" : "file";
-        AppLogger.Log($"PrepareAdd start kind={kind} hash={manager.InfoHashes} dest={safeDestination} dhtState={engine.Dht.State} dhtNodes={engine.Dht.NodeCount}");
+        AppLogger.Log($"PrepareAdd start kind={kind} hash={DescribeInfoHashes(manager.InfoHashes)} trackers={CountTrackers(manager)} dest={safeDestination} dhtState={engine.Dht.State} dhtNodes={engine.Dht.NodeCount}");
         EventHandler<PeersAddedEventArgs> peersHandler = (_, e) => AppLogger.Log($"PrepareAdd: peers found new={e.NewPeers} known={e.ExistingPeers}");
         EventHandler<TorrentStateChangedEventArgs> stateHandler = (_, e) => AppLogger.Log($"PrepareAdd: pending state {e.OldState} -> {e.NewState}");
         manager.PeersFound += peersHandler;
         manager.TorrentStateChanged += stateHandler;
+        EventHandler<AnnounceResponseEventArgs> announceHandler = (_, e) => AppLogger.Log($"PrepareAdd: announce {e.Tracker.Uri} ok={e.Successful} peers={e.Peers.Count}");
+        manager.TrackerManager.AnnounceComplete += announceHandler;
         try
         {
             if (!manager.HasMetadata)
             {
+                await PruneEmptyTrackersAsync(manager, cancellationToken);
                 await manager.StartAsync();
                 try
                 {
@@ -104,7 +111,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
                     var snapshotTask = SnapshotFetchAsync(manager, engine, stopwatch, snapshots.Token);
                     try
                     {
-                        await manager.WaitForMetadataAsync(cancellationToken);
+                        await WaitForMetadataWithTrackerRotationAsync(manager, cancellationToken);
                     }
                     finally
                     {
@@ -152,6 +159,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         {
             manager.PeersFound -= peersHandler;
             manager.TorrentStateChanged -= stateHandler;
+            manager.TrackerManager.AnnounceComplete -= announceHandler;
         }
     }
 
@@ -176,6 +184,152 @@ public sealed class TorrentEngineService : IAsyncDisposable
             AppLogger.Log($"fetch t+{stopwatch.Elapsed:mm\\:ss} metadata={manager.HasMetadata} state={manager.State} {detail} dht={engine.Dht.State} nodes={engine.Dht.NodeCount}");
         }
     }
+
+    private static async Task WaitForMetadataWithTrackerRotationAsync(TorrentManager manager, CancellationToken cancellationToken)
+    {
+        // MonoTorrent announces to a single tracker until one succeeds — even when the
+        // response holds zero peers — so a first-tried empty tracker starves the fetch
+        // while sibling trackers hold live peers, and restarts re-announce to the same
+        // tracker. A starved fetch therefore drops the empty tracker and restarts
+        // (bounded), deterministically walking the list until peers arrive.
+        const int maxRotations = 5;
+        var rotations = 0;
+        var firstSlice = true;
+        while (!manager.HasMetadata)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var slice = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            slice.CancelAfter(firstSlice ? TimeSpan.FromSeconds(20) : TimeSpan.FromSeconds(15));
+            try
+            {
+                await manager.WaitForMetadataAsync(slice.Token);
+                return;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Slice expired with metadata still missing; fall through to the rotation.
+            }
+
+            if (!firstSlice && rotations < maxRotations && await RotateStarvedTrackersAsync(manager, cancellationToken))
+            {
+                rotations++;
+            }
+
+            firstSlice = false;
+        }
+    }
+
+    private static async Task PruneEmptyTrackersAsync(TorrentManager manager, CancellationToken cancellationToken)
+    {
+        var trackers = manager.TrackerManager.Tiers.SelectMany(tier => tier.Trackers).ToList();
+        if (trackers.Count <= 1)
+        {
+            return;
+        }
+
+        // Scrape sequentially: trackers in one tier share a single scrape entry, so a
+        // scrape must be read before the next one overwrites it.
+        var results = new List<(Uri Uri, bool Scraped, int Complete, int Incomplete)>(trackers.Count);
+        foreach (var tracker in trackers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            results.Add(await ScrapeTrackerAsync(manager, tracker, cancellationToken));
+        }
+
+        foreach (var uri in SelectTrackersToPrune(results))
+        {
+            var tracker = trackers.First(candidate => candidate.Uri == uri);
+            AppLogger.Log($"Tracker prune: dropping {uri} (scraped empty).");
+            await manager.TrackerManager.RemoveTrackerAsync(tracker);
+        }
+    }
+
+    private static async Task<(Uri Uri, bool Scraped, int Complete, int Incomplete)> ScrapeTrackerAsync(
+        TorrentManager manager, ITracker tracker, CancellationToken cancellationToken)
+    {
+        if (!tracker.CanScrape)
+        {
+            return (tracker.Uri, false, 0, 0);
+        }
+
+        try
+        {
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            budget.CancelAfter(TimeSpan.FromSeconds(3));
+            await manager.TrackerManager.ScrapeAsync(tracker, budget.Token);
+            var tier = manager.TrackerManager.Tiers.First(candidate => candidate.Trackers.Contains(tracker));
+            if (tier.ScrapeInfo.TryGetValue(manager.InfoHashes.V1OrV2, out var info))
+            {
+                AppLogger.Log($"Tracker scrape: {tracker.Uri} seeds={info.Complete} peers={info.Incomplete}.");
+                return (tracker.Uri, true, info.Complete, info.Incomplete);
+            }
+
+            return (tracker.Uri, false, 0, 0);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            // A failed scrape must never strand the fetch: keep the tracker.
+            AppLogger.Log($"Tracker scrape: {tracker.Uri} unavailable ({exception.GetType().Name}).");
+            return (tracker.Uri, false, 0, 0);
+        }
+    }
+
+    public static IReadOnlyList<Uri> SelectTrackersToPrune(IReadOnlyList<(Uri Uri, bool Scraped, int Complete, int Incomplete)> scrapes)
+    {
+        // Drop proven-empty trackers, but never strand the torrent: trackers whose
+        // scrape failed stay, and when nothing reports peers everything stays.
+        var keeperUris = scrapes
+            .Where(scrape => !scrape.Scraped || scrape.Complete > 0 || scrape.Incomplete > 0)
+            .Select(scrape => scrape.Uri)
+            .ToHashSet();
+        if (keeperUris.Count == 0)
+        {
+            return [];
+        }
+
+        return scrapes.Select(scrape => scrape.Uri).Where(uri => !keeperUris.Contains(uri)).ToList();
+    }
+
+    private static async Task<bool> RotateStarvedTrackersAsync(TorrentManager manager, CancellationToken cancellationToken)
+    {
+        if ((await manager.GetPeersAsync()).Count >= 2)
+        {
+            return false;
+        }
+
+        // Drop the active (empty) tracker in every tier that can spare one, then
+        // restart so the failover announces to the next tracker with merged peers.
+        // A bare restart would re-announce to the same tracker, achieving nothing.
+        var removed = false;
+        foreach (var tier in manager.TrackerManager.Tiers)
+        {
+            if (tier.Trackers.Count > 1 && tier.ActiveTracker is not null)
+            {
+                AppLogger.Log($"Tracker rotation: dropping empty {tier.ActiveTracker.Uri}.");
+                await manager.TrackerManager.RemoveTrackerAsync(tier.ActiveTracker);
+                removed = true;
+            }
+        }
+
+        if (!removed)
+        {
+            return false;
+        }
+
+        await manager.StopAsync();
+        await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+        await manager.StartAsync();
+        return true;
+    }
+
+    private static string DescribeInfoHashes(InfoHashes hashes) => hashes.V1OrV2.ToHex();
+
+    private static int CountTrackers(TorrentManager manager) =>
+        manager.TrackerManager.Tiers.SelectMany(tier => tier.Trackers).Count();
 
     public async Task CommitAddAsync(
         TorrentAddPreview preview,

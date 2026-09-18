@@ -111,20 +111,33 @@ public sealed partial class MainViewModel(
 
     public void OpenSelectedFolder()
     {
-        if (SelectedTorrent is null)
-        {
-            StatusMessage = "Select a torrent first.";
-            return;
-        }
-
-        var destination = SelectedTorrent.Destination;
-        if (!Directory.Exists(destination))
+        var folder = ResolveFolderToOpen(SelectedTorrent, _settings);
+        if (folder is null)
         {
             StatusMessage = "That download folder is not available.";
             return;
         }
 
-        Process.Start(new ProcessStartInfo(destination) { UseShellExecute = true });
+        try
+        {
+            Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
+            if (SelectedTorrent is null)
+            {
+                StatusMessage = "No torrent selected — opened the default download folder.";
+            }
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"Could not open the folder: {exception.Message}";
+        }
+    }
+
+    public static string? ResolveFolderToOpen(TorrentRowViewModel? selected, AppSettings settings)
+    {
+        var candidate = string.IsNullOrWhiteSpace(selected?.Destination)
+            ? settings.DefaultDownloadFolder
+            : selected!.Destination;
+        return Directory.Exists(candidate) ? candidate : null;
     }
 
     public async Task SaveSettingsAsync(AppSettings updatedSettings)
