@@ -16,6 +16,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
     private readonly Dictionary<string, (TorrentManager Manager, string Destination)> _pending = new();
     private ClientEngine? _engine;
     private AppSettings _settings = new();
+    private readonly HashSet<string> _pausedHashes = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
     public TorrentEngineService(AppPaths paths) => _paths = paths;
@@ -33,6 +34,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
             _settings = settings.Copy();
             _settings.Normalize();
+            _pausedHashes.UnionWith(_settings.PausedInfoHashes);
             _paths.EnsureDirectories();
             await DhtBootstrapCache.EnsureSeededAsync(_paths.CacheDirectory, cancellationToken);
             if (File.Exists(_paths.EngineStateFile))
@@ -58,7 +60,17 @@ public sealed class TorrentEngineService : IAsyncDisposable
             }
 
             await _engine.StartAllAsync();
-            AppLogger.Log($"Engine started: resumed {_engine.Torrents.Count} restored torrent(s).");
+            var repaused = 0;
+            foreach (var manager in _engine.Torrents)
+            {
+                if (_pausedHashes.Contains(DescribeInfoHashes(manager.InfoHashes)))
+                {
+                    await manager.StopAsync();
+                    repaused++;
+                }
+            }
+
+            AppLogger.Log($"Engine started: resumed {_engine.Torrents.Count} restored torrent(s), kept {repaused} paused.");
         }
         finally
         {
@@ -228,12 +240,26 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
 
         // Scrape sequentially: trackers in one tier share a single scrape entry, so a
-        // scrape must be read before the next one overwrites it.
+        // scrape must be read before the next one overwrites it. The whole preflight
+        // stays within an overall budget so a long tracker list cannot stall the add.
         var results = new List<(Uri Uri, bool Scraped, int Complete, int Incomplete)>(trackers.Count);
+        using var totalBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        totalBudget.CancelAfter(TimeSpan.FromSeconds(10));
         foreach (var tracker in trackers)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            results.Add(await ScrapeTrackerAsync(manager, tracker, cancellationToken));
+            if (totalBudget.IsCancellationRequested)
+            {
+                break;
+            }
+
+            try
+            {
+                results.Add(await ScrapeTrackerAsync(manager, tracker, totalBudget.Token));
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
 
         foreach (var uri in SelectTrackersToPrune(results))
@@ -294,9 +320,14 @@ public sealed class TorrentEngineService : IAsyncDisposable
         return scrapes.Select(scrape => scrape.Uri).Where(uri => !keeperUris.Contains(uri)).ToList();
     }
 
+    public static bool ShouldRotateTrackerCoverage(int knownPeers, int openConnections) =>
+        knownPeers < 2 && openConnections == 0;
+
     private static async Task<bool> RotateStarvedTrackersAsync(TorrentManager manager, CancellationToken cancellationToken)
     {
-        if ((await manager.GetPeersAsync()).Count >= 2)
+        // A lone connected peer can still deliver metadata: only rotate when nothing
+        // is flowing, otherwise the restart would kill the only useful connection.
+        if (!ShouldRotateTrackerCoverage((await manager.GetPeersAsync()).Count, manager.OpenConnections))
         {
             return false;
         }
@@ -359,9 +390,15 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
             _pending.Remove(preview.Id);
             _entries[preview.Id] = pending;
+            var hash = DescribeInfoHashes(pending.Manager.InfoHashes);
+            _pausedHashes.Remove(hash);
             if (startImmediately)
             {
                 await pending.Manager.StartAsync();
+            }
+            else
+            {
+                _pausedHashes.Add(hash);
             }
         }
         finally
@@ -387,21 +424,26 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
+    public IReadOnlySet<string> PausedInfoHashes => _pausedHashes;
+
     public async Task StartAsync(string id, CancellationToken cancellationToken = default)
     {
         var manager = Find(id);
+        _pausedHashes.Remove(DescribeInfoHashes(manager.InfoHashes));
         await manager.StartAsync();
     }
 
     public async Task PauseAsync(string id, CancellationToken cancellationToken = default)
     {
         var manager = Find(id);
+        _pausedHashes.Add(DescribeInfoHashes(manager.InfoHashes));
         await manager.StopAsync();
     }
 
     public async Task RecheckAsync(string id, CancellationToken cancellationToken = default)
     {
         var manager = Find(id);
+        _pausedHashes.Remove(DescribeInfoHashes(manager.InfoHashes));
         await manager.HashCheckAsync(autoStart: true);
     }
 
@@ -416,6 +458,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 return;
             }
 
+            _pausedHashes.Remove(DescribeInfoHashes(entry.Manager.InfoHashes));
             await engine.RemoveAsync(entry.Manager);
         }
         finally

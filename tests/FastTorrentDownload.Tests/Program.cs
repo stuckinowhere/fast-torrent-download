@@ -155,6 +155,28 @@ Check("tracker prune drops proven-empty trackers but never strands the torrent",
     Require(TorrentEngineService.SelectTrackersToPrune([]).Count == 0);
 });
 
+Check("tracker rotation keeps a lone connected peer instead of restarting", () =>
+{
+    Require(TorrentEngineService.ShouldRotateTrackerCoverage(0, 0));
+    Require(TorrentEngineService.ShouldRotateTrackerCoverage(1, 0));
+    Require(!TorrentEngineService.ShouldRotateTrackerCoverage(1, 1));
+    Require(!TorrentEngineService.ShouldRotateTrackerCoverage(2, 0));
+    Require(!TorrentEngineService.ShouldRotateTrackerCoverage(0, 1));
+});
+
+Check("pause intents copy and normalize without aliasing", () =>
+{
+    var settings = new AppSettings();
+    settings.PausedInfoHashes.Add("ABCDEF");
+    settings.PausedInfoHashes.Add("  ");
+    var clone = settings.Copy();
+    Require(clone.PausedInfoHashes.Contains("abcdef"));
+    clone.PausedInfoHashes.Add("123456");
+    Require(!settings.PausedInfoHashes.Contains("123456"));
+    settings.Normalize();
+    Require(settings.PausedInfoHashes.Count == 1 && settings.PausedInfoHashes.Contains("ABCDEF"));
+});
+
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 

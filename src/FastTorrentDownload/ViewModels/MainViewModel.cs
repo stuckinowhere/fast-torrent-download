@@ -54,6 +54,7 @@ public sealed partial class MainViewModel(
     public async Task AddAsync(TorrentAddPreview preview, IReadOnlyCollection<string> selectedFiles, bool startImmediately)
     {
         await _engine.CommitAddAsync(preview, selectedFiles, startImmediately);
+        await SyncPauseIntentsAsync();
         await RefreshAsync();
         StatusMessage = startImmediately ? "Added and started." : "Added in a paused state.";
     }
@@ -69,12 +70,14 @@ public sealed partial class MainViewModel(
         }
 
         await _engine.StartAsync(SelectedTorrent.Id);
+        await SyncPauseIntentsAsync();
         await RefreshAsync();
     }
 
     public async Task PauseTorrentAsync(string id)
     {
         await _engine.PauseAsync(id);
+        await SyncPauseIntentsAsync();
         await RefreshAsync();
         var row = Torrents.FirstOrDefault(current => current.Id == id);
         SelectedTorrent = row;
@@ -91,6 +94,7 @@ public sealed partial class MainViewModel(
 
         StatusMessage = $"Rechecking {SelectedTorrent.Name}…";
         await _engine.RecheckAsync(SelectedTorrent.Id);
+        await SyncPauseIntentsAsync();
         await RefreshAsync();
     }
 
@@ -104,6 +108,7 @@ public sealed partial class MainViewModel(
 
         var name = SelectedTorrent.Name;
         await _engine.RemoveAsync(SelectedTorrent.Id);
+        await SyncPauseIntentsAsync();
         SelectedTorrent = null;
         await RefreshAsync();
         StatusMessage = $"Removed {name}; downloaded files were kept.";
@@ -140,9 +145,16 @@ public sealed partial class MainViewModel(
         return Directory.Exists(candidate) ? candidate : null;
     }
 
+    private async Task SyncPauseIntentsAsync()
+    {
+        _settings.PausedInfoHashes = new HashSet<string>(_engine.PausedInfoHashes, StringComparer.OrdinalIgnoreCase);
+        await _settingsStore.SaveAsync(_settings);
+    }
+
     public async Task SaveSettingsAsync(AppSettings updatedSettings)
     {
         updatedSettings.Normalize();
+        updatedSettings.PausedInfoHashes = new HashSet<string>(_engine.PausedInfoHashes, StringComparer.OrdinalIgnoreCase);
         await _settingsStore.SaveAsync(updatedSettings);
         await _engine.ApplySettingsAsync(updatedSettings);
         _settings = updatedSettings.Copy();
