@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Net;
 using FastTorrentDownload.Models;
 using MonoTorrent;
 using MonoTorrent.Client;
 using MonoTorrent.Connections;
+using MonoTorrent.Trackers;
 
 namespace FastTorrentDownload.Services;
 
@@ -14,6 +16,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
     private readonly Dictionary<string, (TorrentManager Manager, string Destination)> _pending = new();
     private ClientEngine? _engine;
     private AppSettings _settings = new();
+    private readonly HashSet<string> _pausedHashes = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
     public TorrentEngineService(AppPaths paths) => _paths = paths;
@@ -31,7 +34,9 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
             _settings = settings.Copy();
             _settings.Normalize();
+            _pausedHashes.UnionWith(_settings.PausedInfoHashes);
             _paths.EnsureDirectories();
+            await DhtBootstrapCache.EnsureSeededAsync(_paths.CacheDirectory, cancellationToken);
             if (File.Exists(_paths.EngineStateFile))
             {
                 try
@@ -46,11 +51,26 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
             _engine ??= new ClientEngine(CreateEngineSettings(_settings));
             await _engine.UpdateSettingsAsync(CreateEngineSettings(_settings));
+            AppLogger.Log($"Engine initialized: listen={_settings.ListenAddress}:{_settings.ListenPort} dht={_settings.EnableDht} pex={_settings.EnablePeerExchange} lpd={_settings.EnableLocalPeerDiscovery} upnp={_settings.EnablePortForwarding} restored={_engine.Torrents.Count} dhtState={_engine.Dht.State} dhtNodes={_engine.Dht.NodeCount} tuning={EnginePerformanceTuning.MaxConnections}c/{EnginePerformanceTuning.MaxHalfOpenConnections}half/{EnginePerformanceTuning.MaxConnectionsPerTorrent}pt");
 
             foreach (var manager in _engine.Torrents)
             {
                 Track(manager, "Restored download");
+                await manager.UpdateSettingsAsync(CreateTorrentSettings(_settings));
             }
+
+            await _engine.StartAllAsync();
+            var repaused = 0;
+            foreach (var manager in _engine.Torrents)
+            {
+                if (_pausedHashes.Contains(DescribeInfoHashes(manager.InfoHashes)))
+                {
+                    await manager.StopAsync();
+                    repaused++;
+                }
+            }
+
+            AppLogger.Log($"Engine started: resumed {_engine.Torrents.Count} restored torrent(s), kept {repaused} paused.");
         }
         finally
         {
@@ -69,23 +89,55 @@ public sealed class TorrentEngineService : IAsyncDisposable
             engine = RequireEngine();
             var safeSource = PathGuard.ResolveTorrentSource(source);
             safeDestination = PathGuard.ResolveDestination(_settings.DefaultDownloadFolder, destination);
-            manager = await engine.AddAsync(safeSource, safeDestination, CreateTorrentSettings(_settings));
+            manager = safeSource.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase)
+                ? await engine.AddAsync(MagnetLink.Parse(safeSource), safeDestination, CreateTorrentSettings(_settings))
+                : await engine.AddAsync(Torrent.Load(safeSource), safeDestination, CreateTorrentSettings(_settings));
         }
         finally
         {
             _gate.Release();
         }
 
+        var stopwatch = Stopwatch.StartNew();
+        var kind = source.TrimStart().StartsWith("magnet:", StringComparison.OrdinalIgnoreCase) ? "magnet" : "file";
+        AppLogger.Log($"PrepareAdd start kind={kind} hash={DescribeInfoHashes(manager.InfoHashes)} trackers={CountTrackers(manager)} dest={safeDestination} dhtState={engine.Dht.State} dhtNodes={engine.Dht.NodeCount}");
+        EventHandler<PeersAddedEventArgs> peersHandler = (_, e) => AppLogger.Log($"PrepareAdd: peers found new={e.NewPeers} known={e.ExistingPeers}");
+        EventHandler<TorrentStateChangedEventArgs> stateHandler = (_, e) => AppLogger.Log($"PrepareAdd: pending state {e.OldState} -> {e.NewState}");
+        manager.PeersFound += peersHandler;
+        manager.TorrentStateChanged += stateHandler;
+        EventHandler<AnnounceResponseEventArgs> announceHandler = (_, e) => AppLogger.Log($"PrepareAdd: announce {e.Tracker.Uri} ok={e.Successful} peers={e.Peers.Count}");
+        manager.TrackerManager.AnnounceComplete += announceHandler;
         try
         {
             if (!manager.HasMetadata)
             {
+                await SeedDefaultTrackersAsync(manager);
+                await PruneEmptyTrackersAsync(manager, cancellationToken);
                 await manager.StartAsync();
                 try
                 {
-                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    timeout.CancelAfter(TimeSpan.FromSeconds(60));
-                    await manager.WaitForMetadataAsync(timeout.Token);
+                    // No fixed timeout: thin swarms can take several minutes of DHT
+                    // sampling before a metadata holder is found (uTorrent waits
+                    // indefinitely too). The caller cancels via the token — the file
+                    // picker wires its Cancel button and window close to it.
+                    using var snapshots = new CancellationTokenSource();
+                    var snapshotTask = SnapshotFetchAsync(manager, engine, stopwatch, snapshots.Token);
+                    try
+                    {
+                        await WaitForMetadataWithTrackerRotationAsync(manager, cancellationToken);
+                    }
+                    finally
+                    {
+                        snapshots.Cancel();
+                        try
+                        {
+                            await snapshotTask;
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Expected when the fetch finishes or is cancelled.
+                        }
+                    }
                 }
                 finally
                 {
@@ -104,17 +156,247 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 _gate.Release();
             }
 
+            AppLogger.Log($"PrepareAdd done in {stopwatch.Elapsed:mm\\:ss} files={manager.Files.Count}");
             return new TorrentAddPreview(
                 id,
                 string.IsNullOrWhiteSpace(manager.Name) ? "Torrent" : manager.Name,
                 manager.Files.Select(file => new TorrentFilePreview(file.Path, file.Length)).ToArray());
         }
-        catch
+        catch (Exception exception)
         {
+            AppLogger.LogException($"PrepareAdd failed after {stopwatch.Elapsed:mm\\:ss}", exception);
             await engine!.RemoveAsync(manager);
             throw;
         }
+        finally
+        {
+            manager.PeersFound -= peersHandler;
+            manager.TorrentStateChanged -= stateHandler;
+            manager.TrackerManager.AnnounceComplete -= announceHandler;
+        }
     }
+
+    private static async Task SnapshotFetchAsync(TorrentManager manager, ClientEngine engine, Stopwatch stopwatch, CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+            var detail = "peers=?";
+            try
+            {
+                var peers = await manager.GetPeersAsync();
+                var shown = peers.Take(5).Select(peer =>
+                    $"{peer.Uri.Host}:{peer.Uri.Port} {peer.ClientApp} seeder={peer.IsSeeder} lt={peer.SupportsLTMessages} dir={peer.ConnectionDirection} enc={peer.EncryptionType}");
+                detail = $"peers={peers.Count} open={manager.OpenConnections} [{string.Join("; ", shown)}]";
+            }
+            catch
+            {
+                // A snapshot must never break the fetch.
+            }
+
+            AppLogger.Log($"fetch t+{stopwatch.Elapsed:mm\\:ss} metadata={manager.HasMetadata} state={manager.State} {detail} dht={engine.Dht.State} nodes={engine.Dht.NodeCount}");
+        }
+    }
+
+    private static async Task WaitForMetadataWithTrackerRotationAsync(TorrentManager manager, CancellationToken cancellationToken)
+    {
+        // MonoTorrent announces to a single tracker until one succeeds — even when the
+        // response holds zero peers — so a first-tried empty tracker starves the fetch
+        // while sibling trackers hold live peers, and restarts re-announce to the same
+        // tracker. A starved fetch therefore drops the empty tracker and restarts
+        // (bounded), deterministically walking the list until peers arrive.
+        const int maxRotations = 5;
+        var rotations = 0;
+        var firstSlice = true;
+        while (!manager.HasMetadata)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var slice = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            slice.CancelAfter(firstSlice ? TimeSpan.FromSeconds(20) : TimeSpan.FromSeconds(15));
+            try
+            {
+                await manager.WaitForMetadataAsync(slice.Token);
+                return;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Slice expired with metadata still missing; fall through to the rotation.
+            }
+
+            if (!firstSlice && rotations < maxRotations && await RotateStarvedTrackersAsync(manager, cancellationToken))
+            {
+                rotations++;
+            }
+
+            firstSlice = false;
+        }
+    }
+
+    // Rescue for trackerless magnets: without trackers the fetch relies solely on DHT,
+    // which is slow and unreliable on a cold start. Every entry here was verified
+    // reachable; the scrape preflight below prunes any that report no peers for the
+    // torrent, so a dead entry only costs a few seconds.
+    public static IReadOnlyList<Uri> DefaultPublicTrackers { get; } =
+    [
+        new("https://opentracker.io/announce"),
+        new("udp://open.stealth.si:80/announce"),
+        new("https://torrent.eu.org/announce.php"),
+        new("udp://exodus.desync.com:6969/announce"),
+    ];
+
+    private static async Task SeedDefaultTrackersAsync(TorrentManager manager)
+    {
+        if (CountTrackers(manager) > 0)
+        {
+            return;
+        }
+
+        foreach (var uri in DefaultPublicTrackers)
+        {
+            try
+            {
+                await manager.TrackerManager.AddTrackerAsync(uri);
+            }
+            catch (Exception exception)
+            {
+                // A bad default entry must never break the add; DHT remains.
+                AppLogger.Log($"Default tracker: skipping {uri} ({exception.GetType().Name}).");
+            }
+        }
+
+        AppLogger.Log($"Default tracker: seeded {CountTrackers(manager)} public trackers for trackerless magnet.");
+    }
+
+    private static async Task PruneEmptyTrackersAsync(TorrentManager manager, CancellationToken cancellationToken)
+    {
+        var trackers = manager.TrackerManager.Tiers.SelectMany(tier => tier.Trackers).ToList();
+        if (trackers.Count <= 1)
+        {
+            return;
+        }
+
+        // Scrape sequentially: trackers in one tier share a single scrape entry, so a
+        // scrape must be read before the next one overwrites it. The whole preflight
+        // stays within an overall budget so a long tracker list cannot stall the add.
+        var results = new List<(Uri Uri, bool Scraped, int Complete, int Incomplete)>(trackers.Count);
+        using var totalBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        totalBudget.CancelAfter(TimeSpan.FromSeconds(10));
+        foreach (var tracker in trackers)
+        {
+            if (totalBudget.IsCancellationRequested)
+            {
+                break;
+            }
+
+            try
+            {
+                results.Add(await ScrapeTrackerAsync(manager, tracker, totalBudget.Token));
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+        }
+
+        foreach (var uri in SelectTrackersToPrune(results))
+        {
+            var tracker = trackers.First(candidate => candidate.Uri == uri);
+            AppLogger.Log($"Tracker prune: dropping {uri} (scraped empty).");
+            await manager.TrackerManager.RemoveTrackerAsync(tracker);
+        }
+    }
+
+    private static async Task<(Uri Uri, bool Scraped, int Complete, int Incomplete)> ScrapeTrackerAsync(
+        TorrentManager manager, ITracker tracker, CancellationToken cancellationToken)
+    {
+        if (!tracker.CanScrape)
+        {
+            return (tracker.Uri, false, 0, 0);
+        }
+
+        try
+        {
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            budget.CancelAfter(TimeSpan.FromSeconds(3));
+            await manager.TrackerManager.ScrapeAsync(tracker, budget.Token);
+            var tier = manager.TrackerManager.Tiers.First(candidate => candidate.Trackers.Contains(tracker));
+            if (tier.ScrapeInfo.TryGetValue(manager.InfoHashes.V1OrV2, out var info))
+            {
+                AppLogger.Log($"Tracker scrape: {tracker.Uri} seeds={info.Complete} peers={info.Incomplete}.");
+                return (tracker.Uri, true, info.Complete, info.Incomplete);
+            }
+
+            return (tracker.Uri, false, 0, 0);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            // A failed scrape must never strand the fetch: keep the tracker.
+            AppLogger.Log($"Tracker scrape: {tracker.Uri} unavailable ({exception.GetType().Name}).");
+            return (tracker.Uri, false, 0, 0);
+        }
+    }
+
+    public static IReadOnlyList<Uri> SelectTrackersToPrune(IReadOnlyList<(Uri Uri, bool Scraped, int Complete, int Incomplete)> scrapes)
+    {
+        // Drop proven-empty trackers, but never strand the torrent: trackers whose
+        // scrape failed stay, and when nothing reports peers everything stays.
+        var keeperUris = scrapes
+            .Where(scrape => !scrape.Scraped || scrape.Complete > 0 || scrape.Incomplete > 0)
+            .Select(scrape => scrape.Uri)
+            .ToHashSet();
+        if (keeperUris.Count == 0)
+        {
+            return [];
+        }
+
+        return scrapes.Select(scrape => scrape.Uri).Where(uri => !keeperUris.Contains(uri)).ToList();
+    }
+
+    public static bool ShouldRotateTrackerCoverage(int knownPeers, int openConnections) =>
+        knownPeers < 2 && openConnections == 0;
+
+    private static async Task<bool> RotateStarvedTrackersAsync(TorrentManager manager, CancellationToken cancellationToken)
+    {
+        // A lone connected peer can still deliver metadata: only rotate when nothing
+        // is flowing, otherwise the restart would kill the only useful connection.
+        if (!ShouldRotateTrackerCoverage((await manager.GetPeersAsync()).Count, manager.OpenConnections))
+        {
+            return false;
+        }
+
+        // Drop the active (empty) tracker in every tier that can spare one, then
+        // restart so the failover announces to the next tracker with merged peers.
+        // A bare restart would re-announce to the same tracker, achieving nothing.
+        var removed = false;
+        foreach (var tier in manager.TrackerManager.Tiers)
+        {
+            if (tier.Trackers.Count > 1 && tier.ActiveTracker is not null)
+            {
+                AppLogger.Log($"Tracker rotation: dropping empty {tier.ActiveTracker.Uri}.");
+                await manager.TrackerManager.RemoveTrackerAsync(tier.ActiveTracker);
+                removed = true;
+            }
+        }
+
+        if (!removed)
+        {
+            return false;
+        }
+
+        await manager.StopAsync();
+        await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+        await manager.StartAsync();
+        return true;
+    }
+
+    private static string DescribeInfoHashes(InfoHashes hashes) => hashes.V1OrV2.ToHex();
+
+    private static int CountTrackers(TorrentManager manager) =>
+        manager.TrackerManager.Tiers.SelectMany(tier => tier.Trackers).Count();
 
     public async Task CommitAddAsync(
         TorrentAddPreview preview,
@@ -144,9 +426,15 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
             _pending.Remove(preview.Id);
             _entries[preview.Id] = pending;
+            var hash = DescribeInfoHashes(pending.Manager.InfoHashes);
+            _pausedHashes.Remove(hash);
             if (startImmediately)
             {
                 await pending.Manager.StartAsync();
+            }
+            else
+            {
+                _pausedHashes.Add(hash);
             }
         }
         finally
@@ -172,21 +460,26 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
+    public IReadOnlySet<string> PausedInfoHashes => _pausedHashes;
+
     public async Task StartAsync(string id, CancellationToken cancellationToken = default)
     {
         var manager = Find(id);
+        _pausedHashes.Remove(DescribeInfoHashes(manager.InfoHashes));
         await manager.StartAsync();
     }
 
     public async Task PauseAsync(string id, CancellationToken cancellationToken = default)
     {
         var manager = Find(id);
+        _pausedHashes.Add(DescribeInfoHashes(manager.InfoHashes));
         await manager.StopAsync();
     }
 
     public async Task RecheckAsync(string id, CancellationToken cancellationToken = default)
     {
         var manager = Find(id);
+        _pausedHashes.Remove(DescribeInfoHashes(manager.InfoHashes));
         await manager.HashCheckAsync(autoStart: true);
     }
 
@@ -201,6 +494,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 return;
             }
 
+            _pausedHashes.Remove(DescribeInfoHashes(entry.Manager.InfoHashes));
             await engine.RemoveAsync(entry.Manager);
         }
         finally
@@ -219,6 +513,10 @@ public sealed class TorrentEngineService : IAsyncDisposable
             if (_engine is not null)
             {
                 await _engine.UpdateSettingsAsync(CreateEngineSettings(_settings));
+                foreach (var manager in _engine.Torrents)
+                {
+                    await manager.UpdateSettingsAsync(CreateTorrentSettings(_settings));
+                }
             }
         }
         finally
@@ -227,15 +525,17 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public IReadOnlyList<TorrentSnapshot> GetSnapshots()
+    public async Task<IReadOnlyList<TorrentSnapshot>> GetSnapshotsAsync(bool includePeerCounts = true)
     {
-        return _entries.Select(pair =>
+        var snapshots = new List<TorrentSnapshot>(_entries.Count);
+        foreach (var pair in _entries.ToArray())
         {
             var manager = pair.Value.Manager;
             var monitor = manager.Monitor;
             var downloaded = monitor.DataBytesReceived;
             var uploaded = monitor.DataBytesSent;
-            return new TorrentSnapshot(
+            var (seeders, leechers) = includePeerCounts ? await CountPeersAsync(manager) : (0, 0);
+            snapshots.Add(new TorrentSnapshot(
                 pair.Key,
                 string.IsNullOrWhiteSpace(manager.Name) ? "Fetching metadata…" : manager.Name,
                 pair.Value.Destination,
@@ -245,13 +545,38 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 monitor.UploadRate,
                 downloaded,
                 uploaded,
-                manager.Progress >= 100);
-        }).ToArray();
+                manager.Progress >= 100,
+                seeders,
+                leechers));
+        }
+        return snapshots;
+    }
+
+    private static async Task<(int Seeders, int Leechers)> CountPeersAsync(TorrentManager manager)
+    {
+        try
+        {
+            var peers = await manager.GetPeersAsync();
+            var seeders = 0;
+            foreach (var peer in peers)
+            {
+                if (peer.IsSeeder)
+                {
+                    seeders++;
+                }
+            }
+
+            return (seeders, peers.Count - seeders);
+        }
+        catch
+        {
+            return (0, 0);
+        }
     }
 
     public async Task EnforceRatioPolicyAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var snapshot in GetSnapshots().Where(snapshot => QueueCoordinator.ShouldPauseForRatio(snapshot, _settings)))
+        foreach (var snapshot in (await GetSnapshotsAsync(includePeerCounts: false)).Where(snapshot => QueueCoordinator.ShouldPauseForRatio(snapshot, _settings)))
         {
             await PauseAsync(snapshot.Id, cancellationToken);
         }
@@ -315,7 +640,11 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 ["ipv4"] = new(listenAddress, settings.ListenPort)
             },
             MaximumDownloadRate = ToBytesPerSecond(settings.MaximumDownloadKiBPerSecond),
-            MaximumUploadRate = ToBytesPerSecond(settings.MaximumUploadKiBPerSecond)
+            MaximumUploadRate = ToBytesPerSecond(settings.MaximumUploadKiBPerSecond),
+            MaximumConnections = EnginePerformanceTuning.MaxConnections,
+            MaximumHalfOpenConnections = EnginePerformanceTuning.MaxHalfOpenConnections,
+            DiskCacheBytes = EnginePerformanceTuning.DiskCacheBytes,
+            WebSeedDelay = EnginePerformanceTuning.WebSeedDelay
         };
         return builder.ToSettings();
     }
@@ -325,6 +654,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         AllowDht = settings.EnableDht,
         AllowPeerExchange = settings.EnablePeerExchange,
         CreateContainingDirectory = true,
+        MaximumConnections = EnginePerformanceTuning.MaxConnectionsPerTorrent,
         MaximumDownloadRate = ToBytesPerSecond(settings.MaximumDownloadKiBPerSecond),
         MaximumUploadRate = ToBytesPerSecond(settings.MaximumUploadKiBPerSecond)
     }.ToSettings();

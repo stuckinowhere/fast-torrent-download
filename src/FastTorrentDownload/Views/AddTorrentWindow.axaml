@@ -1,27 +1,29 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="FastTorrentDownload.Views.AddTorrentWindow"
-        Title="Add torrent" Width="650" SizeToContent="Height"
-        CanResize="False" WindowStartupLocation="CenterOwner">
+        Title="Add torrent" Width="650" SizeToContent="Height" ShowInTaskbar="False"
+        CanResize="False" WindowStartupLocation="CenterOwner" DragDrop.AllowDrop="True" DragDrop.Drop="Drop_Handle">
   <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="16">
     <StackPanel Spacing="7">
       <TextBlock Text="Magnet link or .torrent file" FontWeight="SemiBold" />
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
         <TextBox x:Name="SourceTextBox" PlaceholderText="magnet:?xt=urn:btih:…" />
-        <Button Grid.Column="1" Content="Browse…" Click="BrowseTorrent_Click" />
+        <Button Grid.Column="1" Content="Browse…" Click="BrowseTorrent_Click" MinHeight="44" HorizontalContentAlignment="Left" VerticalContentAlignment="Center" />
       </Grid>
     </StackPanel>
     <StackPanel Grid.Row="1" Spacing="7">
       <TextBlock Text="Download folder" FontWeight="SemiBold" />
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
         <TextBox x:Name="DestinationTextBox" />
-        <Button Grid.Column="1" Content="Choose…" Click="ChooseFolder_Click" />
+        <Button Grid.Column="1" Content="Choose…" Click="ChooseFolder_Click" MinHeight="44" HorizontalContentAlignment="Left" VerticalContentAlignment="Center" />
       </Grid>
     </StackPanel>
     <CheckBox Grid.Row="2" x:Name="StartImmediatelyCheckBox" IsChecked="True" Content="Start immediately" />
-    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-      <Button Content="Cancel" Click="Cancel_Click" />
-      <Button Classes="primary" Content="Add torrent" Click="Add_Click" />
+    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+      <Button Content="Cancel" Click="Cancel_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="120"
+              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button Classes="primary" Content="Add torrent" Click="Add_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="120"
+              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
     </StackPanel>
   </Grid>
 </Window>

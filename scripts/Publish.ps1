@@ -39,6 +39,9 @@ if (-not $SkipInstaller) {
 
     & $iscc.Source "/DMyAppVersion=$Version" "/DSourceDir=$publishRoot" "/DOutputDir=$artifactsRoot" `
         (Join-Path $projectRoot 'installer\\fast-torrent-download.iss')
+    if ($LASTEXITCODE -ne 0) {
+        throw "Inno Setup compiler failed with exit code $LASTEXITCODE."
+    }
 }
 
 Write-Host "Created release artifacts in $artifactsRoot"

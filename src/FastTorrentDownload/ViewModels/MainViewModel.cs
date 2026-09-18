@@ -29,6 +29,15 @@ public sealed partial class MainViewModel(
 
     public AppSettings Settings => _settings;
 
+    public string AppVersionLabel
+    {
+        get
+        {
+            var version = typeof(MainViewModel).Assembly.GetName().Version ?? new Version(0, 1, 0);
+            return $"v{version.Major}.{version.Minor}.{version.Build}";
+        }
+    }
+
     public async Task InitializeAsync()
     {
         _settings = await _settingsStore.LoadAsync();
@@ -36,15 +45,16 @@ public sealed partial class MainViewModel(
         await _engine.InitializeAsync(_settings);
         await RefreshAsync();
         StatusMessage = "Ready — add a magnet link or .torrent file.";
-        _ = CheckForUpdatesAsync(quiet: true);
+        // Update prompts are driven by the main window so a dialog can be shown.
     }
 
-    public Task<TorrentAddPreview> PrepareAddAsync(string source, string? destination) =>
-        _engine.PrepareAddAsync(source, destination);
+    public Task<TorrentAddPreview> PrepareAddAsync(string source, string? destination, CancellationToken cancellationToken = default) =>
+        _engine.PrepareAddAsync(source, destination, cancellationToken);
 
     public async Task AddAsync(TorrentAddPreview preview, IReadOnlyCollection<string> selectedFiles, bool startImmediately)
     {
         await _engine.CommitAddAsync(preview, selectedFiles, startImmediately);
+        await SyncPauseIntentsAsync();
         await RefreshAsync();
         StatusMessage = startImmediately ? "Added and started." : "Added in a paused state.";
     }
@@ -60,19 +70,18 @@ public sealed partial class MainViewModel(
         }
 
         await _engine.StartAsync(SelectedTorrent.Id);
+        await SyncPauseIntentsAsync();
         await RefreshAsync();
     }
 
-    public async Task PauseSelectedAsync()
+    public async Task PauseTorrentAsync(string id)
     {
-        if (SelectedTorrent is null)
-        {
-            StatusMessage = "Select a torrent first.";
-            return;
-        }
-
-        await _engine.PauseAsync(SelectedTorrent.Id);
+        await _engine.PauseAsync(id);
+        await SyncPauseIntentsAsync();
         await RefreshAsync();
+        var row = Torrents.FirstOrDefault(current => current.Id == id);
+        SelectedTorrent = row;
+        StatusMessage = row is null ? "Paused." : $"Paused {row.Name}.";
     }
 
     public async Task RecheckSelectedAsync()
@@ -85,6 +94,7 @@ public sealed partial class MainViewModel(
 
         StatusMessage = $"Rechecking {SelectedTorrent.Name}…";
         await _engine.RecheckAsync(SelectedTorrent.Id);
+        await SyncPauseIntentsAsync();
         await RefreshAsync();
     }
 
@@ -98,6 +108,7 @@ public sealed partial class MainViewModel(
 
         var name = SelectedTorrent.Name;
         await _engine.RemoveAsync(SelectedTorrent.Id);
+        await SyncPauseIntentsAsync();
         SelectedTorrent = null;
         await RefreshAsync();
         StatusMessage = $"Removed {name}; downloaded files were kept.";
@@ -105,25 +116,45 @@ public sealed partial class MainViewModel(
 
     public void OpenSelectedFolder()
     {
-        if (SelectedTorrent is null)
-        {
-            StatusMessage = "Select a torrent first.";
-            return;
-        }
-
-        var destination = SelectedTorrent.Destination;
-        if (!Directory.Exists(destination))
+        var folder = ResolveFolderToOpen(SelectedTorrent, _settings);
+        if (folder is null)
         {
             StatusMessage = "That download folder is not available.";
             return;
         }
 
-        Process.Start(new ProcessStartInfo(destination) { UseShellExecute = true });
+        try
+        {
+            Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
+            if (SelectedTorrent is null)
+            {
+                StatusMessage = "No torrent selected — opened the default download folder.";
+            }
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"Could not open the folder: {exception.Message}";
+        }
+    }
+
+    public static string? ResolveFolderToOpen(TorrentRowViewModel? selected, AppSettings settings)
+    {
+        var candidate = string.IsNullOrWhiteSpace(selected?.Destination)
+            ? settings.DefaultDownloadFolder
+            : selected!.Destination;
+        return Directory.Exists(candidate) ? candidate : null;
+    }
+
+    private async Task SyncPauseIntentsAsync()
+    {
+        _settings.PausedInfoHashes = new HashSet<string>(_engine.PausedInfoHashes, StringComparer.OrdinalIgnoreCase);
+        await _settingsStore.SaveAsync(_settings);
     }
 
     public async Task SaveSettingsAsync(AppSettings updatedSettings)
     {
         updatedSettings.Normalize();
+        updatedSettings.PausedInfoHashes = new HashSet<string>(_engine.PausedInfoHashes, StringComparer.OrdinalIgnoreCase);
         await _settingsStore.SaveAsync(updatedSettings);
         await _engine.ApplySettingsAsync(updatedSettings);
         _settings = updatedSettings.Copy();
@@ -188,7 +219,7 @@ public sealed partial class MainViewModel(
         try
         {
             await _engine.EnforceRatioPolicyAsync();
-            var snapshots = _engine.GetSnapshots();
+            var snapshots = await _engine.GetSnapshotsAsync();
             var rowsById = Torrents.ToDictionary(row => row.Id);
             foreach (var snapshot in snapshots)
             {

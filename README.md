@@ -39,7 +39,7 @@ dotnet run --project tests/FastTorrentDownload.Tests/FastTorrentDownload.Tests.c
 On Windows with Inno Setup installed, run:
 
 ```powershell
-.\\scripts\\Publish.ps1 -Version 0.1.0
+.\\scripts\\Publish.ps1 -Version 0.1.1
 ```
 
 It creates a self-contained Windows x64 portable ZIP, an SHA-256 checksum file, and a per-user installer under `artifacts\\`. The installer is intentionally unsigned: publish the checksum beside it and expect Microsoft SmartScreen to show a reputation warning for early releases.
