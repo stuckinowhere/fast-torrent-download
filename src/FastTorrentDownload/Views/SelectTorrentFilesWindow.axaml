@@ -5,16 +5,22 @@
         x:DataType="local:SelectTorrentFilesWindow"
         Title="Select torrent files" Width="760" Height="560"
         MinWidth="560" MinHeight="420"
+        ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner">
-  <Grid Margin="24" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="14">
+  <Grid Margin="24" RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="14">
     <StackPanel Spacing="4">
       <TextBlock Text="Select files to download" FontSize="20" FontWeight="Bold" />
       <TextBlock Text="Choose the files to keep. Unselected files will not be downloaded." Opacity="0.72" />
-      <TextBlock Text="{Binding TorrentName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+      <TextBlock x:Name="TorrentNameTextBlock" Text="{Binding TorrentName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
     </StackPanel>
 
-    <ListBox Grid.Row="1" ItemsSource="{Binding Files}"
-             BorderThickness="1" Padding="8" ScrollViewer.VerticalScrollBarVisibility="Auto">
+    <StackPanel Grid.Row="1" x:Name="LoadingPanel" Spacing="12" Margin="0,8">
+      <ProgressBar IsIndeterminate="True" Width="240" HorizontalAlignment="Center" />
+      <TextBlock Text="Fetching file list…" Opacity="0.72" HorizontalAlignment="Center" />
+    </StackPanel>
+
+    <ListBox Grid.Row="2" x:Name="FilesListBox" ItemsSource="{Binding Files}"
+             BorderThickness="1" Padding="8" ScrollViewer.VerticalScrollBarVisibility="Auto" IsVisible="False">
       <ListBox.ItemTemplate>
         <DataTemplate x:DataType="local:TorrentFileSelectionItem">
           <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
@@ -28,13 +34,18 @@
       </ListBox.ItemTemplate>
     </ListBox>
 
-    <TextBlock Grid.Row="2" x:Name="StatusTextBlock" Foreground="#C62828"
+    <TextBlock Grid.Row="3" x:Name="StatusTextBlock" Foreground="#C62828"
                TextWrapping="Wrap" IsVisible="False" />
 
-    <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
-      <Button Content="Select all" Click="SelectAll_Click" />
-      <Button Grid.Column="1" Content="Select none" Click="SelectNone_Click" />
-      <Button Grid.Column="3" Classes="primary" Content="Add selected files" Click="Add_Click" />
+    <Grid Grid.Row="4" x:Name="ActionBar" ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="12">
+      <Button x:Name="SelectAllButton" Content="Select all" Click="SelectAll_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110" IsEnabled="False"
+              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button Grid.Column="1" x:Name="SelectNoneButton" Content="Select none" Click="SelectNone_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110" IsEnabled="False"
+              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button Grid.Column="3" Content="Cancel" Click="Cancel_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110"
+              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button Grid.Column="4" x:Name="AddSelectedButton" Classes="primary" Content="Add selected files" Click="Add_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110" IsEnabled="False"
+              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
     </Grid>
   </Grid>
 </Window>

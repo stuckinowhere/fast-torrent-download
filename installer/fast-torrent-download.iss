@@ -1,14 +1,25 @@
 #define MyAppName "fast torrent download"
-#define MyAppVersion GetStringParam("MyAppVersion", "0.1.0")
+#define MyAppPublisher "stuckinowhere"
+#define MyAppURL "https://github.com/stuckinowhere/fast-torrent-download"
+#ifndef MyAppVersion
+  #define MyAppVersion "0.1.1"
+#endif
 #define MyAppExeName "FastTorrentDownload.exe"
-#define SourceDir GetStringParam("SourceDir", "..\\artifacts\\fast-torrent-download-win-x64")
-#define OutputDir GetStringParam("OutputDir", "..\\artifacts")
+#ifndef SourceDir
+  #define SourceDir "..\\artifacts\\fast-torrent-download-win-x64"
+#endif
+#ifndef OutputDir
+  #define OutputDir "..\\artifacts"
+#endif
 
 [Setup]
 AppId={{0F391C83-3CBB-485F-91C5-8754E80F1A9E}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppPublisher=fast torrent download contributors
+AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}/issues
+AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={localappdata}\\Programs\\fast torrent download
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes

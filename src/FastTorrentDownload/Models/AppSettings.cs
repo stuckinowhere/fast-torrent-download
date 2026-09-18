@@ -18,8 +18,14 @@ public sealed class AppSettings
     public string Theme { get; set; } = "System";
     public bool ConfirmCloseBeforeExit { get; set; } = true;
     public string UpdateRepository { get; set; } = "stuckinowhere/fast-torrent-download";
+    public HashSet<string> PausedInfoHashes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public AppSettings Copy() => (AppSettings)MemberwiseClone();
+    public AppSettings Copy()
+    {
+        var clone = (AppSettings)MemberwiseClone();
+        clone.PausedInfoHashes = new HashSet<string>(PausedInfoHashes, StringComparer.OrdinalIgnoreCase);
+        return clone;
+    }
 
     public void Normalize()
     {
@@ -34,5 +40,8 @@ public sealed class AppSettings
         MaximumUploadKiBPerSecond = Math.Max(0, MaximumUploadKiBPerSecond);
         SeedRatioTarget = Math.Max(0, SeedRatioTarget);
         Theme = Theme is "Light" or "Dark" or "System" ? Theme : "System";
+        PausedInfoHashes = new HashSet<string>(
+            PausedInfoHashes.Where(hash => !string.IsNullOrWhiteSpace(hash)),
+            StringComparer.OrdinalIgnoreCase);
     }
 }

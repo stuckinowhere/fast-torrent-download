@@ -1,0 +1,35 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:FastTorrentDownload.Views"
+        x:Class="FastTorrentDownload.Views.PauseTorrentWindow"
+        x:DataType="local:PauseTorrentWindow"
+        Title="Pause torrent" Width="620" Height="460"
+        MinWidth="480" MinHeight="360"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+  <Grid Margin="24" RowDefinitions="Auto,*,Auto" RowSpacing="14">
+    <StackPanel Spacing="4">
+      <TextBlock Text="Pause a torrent" FontSize="20" FontWeight="Bold" />
+      <TextBlock Text="Choose the download to pause." Opacity="0.72" />
+    </StackPanel>
+
+    <ListBox Grid.Row="1" x:Name="TorrentsListBox" ItemsSource="{Binding Torrents}"
+             BorderThickness="1" Padding="8" ScrollViewer.VerticalScrollBarVisibility="Auto">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="local:PausableTorrentItem">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+            <TextBlock Grid.Column="1" Text="{Binding State}" FontFamily="Consolas" Opacity="0.72" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+
+    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+      <Button Content="Cancel" Click="Cancel_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110"
+              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button Classes="primary" Content="Pause" Click="Pause_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110"
+              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+    </StackPanel>
+  </Grid>
+</Window>
