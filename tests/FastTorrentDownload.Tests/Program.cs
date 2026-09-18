@@ -164,6 +164,14 @@ Check("tracker rotation keeps a lone connected peer instead of restarting", () =
     Require(!TorrentEngineService.ShouldRotateTrackerCoverage(0, 1));
 });
 
+Check("trackerless magnets fall back to known public trackers", () =>
+{
+    var trackers = TorrentEngineService.DefaultPublicTrackers;
+    Require(trackers.Count >= 3);
+    Require(trackers.All(uri => uri.IsAbsoluteUri && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == "udp")));
+    Require(trackers.Select(uri => uri.AbsoluteUri).Distinct().Count() == trackers.Count);
+});
+
 Check("pause intents copy and normalize without aliasing", () =>
 {
     var settings = new AppSettings();

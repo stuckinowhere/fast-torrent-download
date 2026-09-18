@@ -111,6 +111,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         {
             if (!manager.HasMetadata)
             {
+                await SeedDefaultTrackersAsync(manager);
                 await PruneEmptyTrackersAsync(manager, cancellationToken);
                 await manager.StartAsync();
                 try
@@ -229,6 +230,41 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
             firstSlice = false;
         }
+    }
+
+    // Rescue for trackerless magnets: without trackers the fetch relies solely on DHT,
+    // which is slow and unreliable on a cold start. Every entry here was verified
+    // reachable; the scrape preflight below prunes any that report no peers for the
+    // torrent, so a dead entry only costs a few seconds.
+    public static IReadOnlyList<Uri> DefaultPublicTrackers { get; } =
+    [
+        new("https://opentracker.io/announce"),
+        new("udp://open.stealth.si:80/announce"),
+        new("https://torrent.eu.org/announce.php"),
+        new("udp://exodus.desync.com:6969/announce"),
+    ];
+
+    private static async Task SeedDefaultTrackersAsync(TorrentManager manager)
+    {
+        if (CountTrackers(manager) > 0)
+        {
+            return;
+        }
+
+        foreach (var uri in DefaultPublicTrackers)
+        {
+            try
+            {
+                await manager.TrackerManager.AddTrackerAsync(uri);
+            }
+            catch (Exception exception)
+            {
+                // A bad default entry must never break the add; DHT remains.
+                AppLogger.Log($"Default tracker: skipping {uri} ({exception.GetType().Name}).");
+            }
+        }
+
+        AppLogger.Log($"Default tracker: seeded {CountTrackers(manager)} public trackers for trackerless magnet.");
     }
 
     private static async Task PruneEmptyTrackersAsync(TorrentManager manager, CancellationToken cancellationToken)
