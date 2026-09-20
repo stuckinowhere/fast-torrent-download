@@ -1,0 +1,88 @@
+# linear-sync — mirror GitHub PR lifecycle into Linear (stuckinowhere workspace).
+# Reuses scripts/linear.mjs. Requires repo secret LINEAR_API_KEY. Skips dependabot PRs.
+name: linear-sync
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize, closed]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  sync:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.event.repository.name }}
+      EVT: ${{ github.event_name }}
+      ACT: ${{ github.event.action }}
+      PR_NUM: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      PR_HEAD: ${{ github.event.pull_request.head.ref }}
+      PR_BASE: ${{ github.event.pull_request.base.ref }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      PR_DRAFT: ${{ github.event.pull_request.draft }}
+      PR_MERGED: ${{ github.event.pull_request.merged }}
+      REVIEW_STATE: ${{ github.event.review.state }}
+      REVIEW_BY: ${{ github.event.review.user.login }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Sync PR to Linear
+        run: |
+          set -euo pipefail
+          [ -z "$LINEAR_API_KEY" ] && echo "no LINEAR_API_KEY, skipping" && exit 0
+
+          # Review submitted → comment on the linked issue.
+          if [ "$EVT" = "pull_request_review" ]; then
+            ID=$(node scripts/linear.mjs find --project "$REPO" --title "[PR #$PR_NUM]")
+            if [ -n "$ID" ]; then
+              node scripts/linear.mjs comment "$ID" "Review by @$REVIEW_BY: $REVIEW_STATE ($PR_URL)"
+            fi
+            exit 0
+          fi
+
+          # Prefer the issue keyed in the branch name (stu-123/desc), else the [PR #N] issue.
+          KEY=$(echo "$PR_HEAD" | grep -oEi '[a-z]+-[0-9]+' | head -1 || true)
+          ID=""
+          if [ -n "$KEY" ]; then ID=$(node scripts/linear.mjs find-key "$KEY" || true); fi
+          if [ -z "$ID" ]; then ID=$(node scripts/linear.mjs find --project "$REPO" --title "[PR #$PR_NUM]" || true); fi
+
+          case "$ACT" in
+            opened|reopened)
+              if [ -z "$ID" ]; then
+                ST="In Review"
+                [ "$PR_DRAFT" = "true" ] && ST="Todo"
+                OUT=$(node scripts/linear.mjs create --project "$REPO" --title "[PR #$PR_NUM] $PR_TITLE" --desc "PR: $PR_URL | branch: $PR_HEAD | author: @$PR_AUTHOR" --state "$ST")
+                URL=$(echo "$OUT" | sed -n '2p')
+                gh pr comment "$PR_NUM" --body "Tracked in Linear: $URL"
+              else
+                node scripts/linear.mjs comment "$ID" "PR $ACT: $PR_URL"
+                node scripts/linear.mjs state "$ID" "In Review"
+              fi
+              ;;
+            ready_for_review|synchronize)
+              [ -n "$ID" ] && node scripts/linear.mjs state "$ID" "In Review"
+              ;;
+            closed)
+              if [ -n "$ID" ]; then
+                if [ "$PR_MERGED" = "true" ]; then
+                  node scripts/linear.mjs comment "$ID" "Merged into $PR_BASE."
+                  node scripts/linear.mjs state "$ID" "Done"
+                else
+                  node scripts/linear.mjs comment "$ID" "Closed without merge."
+                  node scripts/linear.mjs state "$ID" "Canceled"
+                fi
+              fi
+              ;;
+          esac
+          exit 0
