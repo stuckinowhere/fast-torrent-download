@@ -218,13 +218,13 @@ switch (cmd) {
       process.exit(1);
     }
     const p = await resolveProject(flags['project']);
+    // List-then-filter instead of searchIssues: Linear's text search does not
+    // reliably match bracketed prefixes like "[PR #8]" in titles.
     const d = await gql(
-      `query($q: String!) { searchIssues(term: $q, first: 25) { nodes { id title project { id } } } }`,
-      { q: flags['title'] },
+      `query($f: IssueFilter!) { issues(filter: $f, first: 250) { nodes { id title } } }`,
+      { f: { project: { id: { eq: p.id } } } },
     );
-    const hit = d.searchIssues.nodes.find(
-      (n) => n.project.id === p.id && n.title.startsWith(flags['title']),
-    );
+    const hit = d.issues.nodes.find((n) => n.title.startsWith(flags['title']));
     if (hit) console.log(hit.id);
     break;
   }
