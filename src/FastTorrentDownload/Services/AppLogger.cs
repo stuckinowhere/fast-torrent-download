@@ -19,8 +19,6 @@ public static class AppLogger
         }
     }
 
-    public static string? LogFile => _logFile;
-
     public static void Log(string message)
     {
         var file = _logFile;

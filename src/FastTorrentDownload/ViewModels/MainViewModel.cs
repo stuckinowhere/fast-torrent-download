@@ -173,7 +173,7 @@ public sealed partial class MainViewModel(
         try
         {
             var currentVersion = typeof(MainViewModel).Assembly.GetName().Version ?? new Version(0, 1, 0);
-            var update = await _updateService.CheckAsync(_settings.UpdateRepository, currentVersion);
+            var update = await _updateService.CheckAsync(currentVersion);
             if (update is not null)
             {
                 StatusMessage = $"Update {update.Tag} is available.";
