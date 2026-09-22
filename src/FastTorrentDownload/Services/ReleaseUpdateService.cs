@@ -3,22 +3,19 @@ using System.Text.Json;
 
 namespace FastTorrentDownload.Services;
 
-public sealed record AvailableUpdate(Version Version, string Tag, Uri ReleasePage, Uri PackageUrl, Uri ChecksumUrl);
+public sealed record AvailableUpdate(string Tag, Uri PackageUrl, Uri ChecksumUrl);
 
 public sealed record ReleaseAsset(string Name, Uri DownloadUrl);
 
 public sealed class ReleaseUpdateService
 {
+    public const string Repository = "stuckinowhere/fast-torrent-download";
+
     private static readonly HttpClient Client = CreateClient();
 
-    public async Task<AvailableUpdate?> CheckAsync(string repository, Version installedVersion, CancellationToken cancellationToken = default)
+    public async Task<AvailableUpdate?> CheckAsync(Version installedVersion, CancellationToken cancellationToken = default)
     {
-        if (!IsRepositoryName(repository))
-        {
-            return null;
-        }
-
-        using var response = await Client.GetAsync($"repos/{repository}/releases/latest", cancellationToken);
+        using var response = await Client.GetAsync($"repos/{Repository}/releases/latest", cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return null;
@@ -46,7 +43,7 @@ public sealed class ReleaseUpdateService
             return null;
         }
 
-        return new AvailableUpdate(version, tag, releasePage, package.Value.PackageUrl, package.Value.ChecksumUrl);
+        return new AvailableUpdate(tag, package.Value.PackageUrl, package.Value.ChecksumUrl);
     }
 
     private static List<ReleaseAsset> ReadAssets(JsonElement root)
@@ -116,12 +113,5 @@ public sealed class ReleaseUpdateService
         client.DefaultRequestHeaders.UserAgent.ParseAdd("fast-torrent-download/0.1");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return client;
-    }
-
-    private static bool IsRepositoryName(string repository)
-    {
-        var parts = repository.Split('/', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length == 2 && parts.All(part => part.All(character =>
-            char.IsLetterOrDigit(character) || character is '-' or '_' or '.'));
     }
 }

@@ -17,7 +17,6 @@ public sealed class AppSettings
     public double SeedRatioTarget { get; set; } = 1.0;
     public string Theme { get; set; } = "System";
     public bool ConfirmCloseBeforeExit { get; set; } = true;
-    public string UpdateRepository { get; set; } = "stuckinowhere/fast-torrent-download";
     public HashSet<string> PausedInfoHashes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public AppSettings Copy()
