@@ -172,6 +172,38 @@ Check("trackerless magnets fall back to known public trackers", () =>
     Require(trackers.Select(uri => uri.AbsoluteUri).Distinct().Count() == trackers.Count);
 });
 
+Check("torrent file paths must stay inside the download folder", () =>
+{
+    var dest = Path.Combine(Path.GetTempPath(), "ftd-safe-dest", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(dest);
+    try
+    {
+        Require(PathGuard.IsSafeTorrentFilePath(dest, "video.mkv"));
+        Require(PathGuard.IsSafeTorrentFilePath(dest, Path.Combine("season 1", "episode.mkv")));
+        Require(!PathGuard.IsSafeTorrentFilePath(dest, Path.Combine("..", "outside.bin")));
+        Require(!PathGuard.IsSafeTorrentFilePath(dest, "/etc/passwd"));
+        Require(!PathGuard.IsSafeTorrentFilePath(dest, @"\Users\Public\pwned.txt"));
+        Require(!PathGuard.IsSafeTorrentFilePath(dest, @"C:\Windows\win.ini"));
+        Require(!PathGuard.IsSafeTorrentFilePath(dest, @"foo\..\..\secret.txt"));
+        Require(!PathGuard.IsSafeTorrentFilePath(dest, "foo/../../secret.txt"));
+        Require(!PathGuard.IsSafeTorrentFilePath(dest, ""));
+        Require(!PathGuard.IsSafeTorrentFilePath(dest, "   "));
+        try
+        {
+            PathGuard.ThrowIfUnsafeTorrentFiles(dest, [@"\Users\Public\pwned.txt"]);
+            throw new InvalidOperationException("Expected an unsafe torrent path to be rejected.");
+        }
+        catch (InvalidDataException)
+        {
+            // Expected: a rooted torrent path must never reach the engine write path.
+        }
+    }
+    finally
+    {
+        try { Directory.Delete(dest, recursive: true); } catch { }
+    }
+});
+
 Check("pause intents copy and normalize without aliasing", () =>
 {
     var settings = new AppSettings();
