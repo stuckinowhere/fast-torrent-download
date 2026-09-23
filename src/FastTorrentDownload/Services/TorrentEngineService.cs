@@ -274,7 +274,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         {
             throw;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
             // A failed scrape must never strand the fetch: keep the tracker.
             return (tracker.Uri, false, 0, 0);
