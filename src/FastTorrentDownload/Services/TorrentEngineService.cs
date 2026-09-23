@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using FastTorrentDownload.Models;
 using MonoTorrent;
@@ -98,15 +97,6 @@ public sealed class TorrentEngineService : IAsyncDisposable
             _gate.Release();
         }
 
-        var stopwatch = Stopwatch.StartNew();
-        var kind = source.TrimStart().StartsWith("magnet:", StringComparison.OrdinalIgnoreCase) ? "magnet" : "file";
-        AppLogger.Log($"PrepareAdd start kind={kind} hash={DescribeInfoHashes(manager.InfoHashes)} trackers={CountTrackers(manager)} dest={safeDestination} dhtState={engine.Dht.State} dhtNodes={engine.Dht.NodeCount}");
-        EventHandler<PeersAddedEventArgs> peersHandler = (_, e) => AppLogger.Log($"PrepareAdd: peers found new={e.NewPeers} known={e.ExistingPeers}");
-        EventHandler<TorrentStateChangedEventArgs> stateHandler = (_, e) => AppLogger.Log($"PrepareAdd: pending state {e.OldState} -> {e.NewState}");
-        manager.PeersFound += peersHandler;
-        manager.TorrentStateChanged += stateHandler;
-        EventHandler<AnnounceResponseEventArgs> announceHandler = (_, e) => AppLogger.Log($"PrepareAdd: announce {e.Tracker.Uri} ok={e.Successful} peers={e.Peers.Count}");
-        manager.TrackerManager.AnnounceComplete += announceHandler;
         try
         {
             if (!manager.HasMetadata)
@@ -120,24 +110,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
                     // sampling before a metadata holder is found (uTorrent waits
                     // indefinitely too). The caller cancels via the token — the file
                     // picker wires its Cancel button and window close to it.
-                    using var snapshots = new CancellationTokenSource();
-                    var snapshotTask = SnapshotFetchAsync(manager, engine, stopwatch, snapshots.Token);
-                    try
-                    {
-                        await WaitForMetadataWithTrackerRotationAsync(manager, cancellationToken);
-                    }
-                    finally
-                    {
-                        snapshots.Cancel();
-                        try
-                        {
-                            await snapshotTask;
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            // Expected when the fetch finishes or is cancelled.
-                        }
-                    }
+                    await WaitForMetadataWithTrackerRotationAsync(manager, cancellationToken);
                 }
                 finally
                 {
@@ -156,7 +129,6 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 _gate.Release();
             }
 
-            AppLogger.Log($"PrepareAdd done in {stopwatch.Elapsed:mm\\:ss} files={manager.Files.Count}");
             return new TorrentAddPreview(
                 id,
                 string.IsNullOrWhiteSpace(manager.Name) ? "Torrent" : manager.Name,
@@ -164,37 +136,9 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            AppLogger.LogException($"PrepareAdd failed after {stopwatch.Elapsed:mm\\:ss}", exception);
+            AppLogger.LogException("PrepareAdd failed", exception);
             await engine!.RemoveAsync(manager);
             throw;
-        }
-        finally
-        {
-            manager.PeersFound -= peersHandler;
-            manager.TorrentStateChanged -= stateHandler;
-            manager.TrackerManager.AnnounceComplete -= announceHandler;
-        }
-    }
-
-    private static async Task SnapshotFetchAsync(TorrentManager manager, ClientEngine engine, Stopwatch stopwatch, CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
-            var detail = "peers=?";
-            try
-            {
-                var peers = await manager.GetPeersAsync();
-                var shown = peers.Take(5).Select(peer =>
-                    $"{peer.Uri.Host}:{peer.Uri.Port} {peer.ClientApp} seeder={peer.IsSeeder} lt={peer.SupportsLTMessages} dir={peer.ConnectionDirection} enc={peer.EncryptionType}");
-                detail = $"peers={peers.Count} open={manager.OpenConnections} [{string.Join("; ", shown)}]";
-            }
-            catch
-            {
-                // A snapshot must never break the fetch.
-            }
-
-            AppLogger.Log($"fetch t+{stopwatch.Elapsed:mm\\:ss} metadata={manager.HasMetadata} state={manager.State} {detail} dht={engine.Dht.State} nodes={engine.Dht.NodeCount}");
         }
     }
 
@@ -301,7 +245,6 @@ public sealed class TorrentEngineService : IAsyncDisposable
         foreach (var uri in SelectTrackersToPrune(results))
         {
             var tracker = trackers.First(candidate => candidate.Uri == uri);
-            AppLogger.Log($"Tracker prune: dropping {uri} (scraped empty).");
             await manager.TrackerManager.RemoveTrackerAsync(tracker);
         }
     }
@@ -322,7 +265,6 @@ public sealed class TorrentEngineService : IAsyncDisposable
             var tier = manager.TrackerManager.Tiers.First(candidate => candidate.Trackers.Contains(tracker));
             if (tier.ScrapeInfo.TryGetValue(manager.InfoHashes.V1OrV2, out var info))
             {
-                AppLogger.Log($"Tracker scrape: {tracker.Uri} seeds={info.Complete} peers={info.Incomplete}.");
                 return (tracker.Uri, true, info.Complete, info.Incomplete);
             }
 
@@ -332,10 +274,9 @@ public sealed class TorrentEngineService : IAsyncDisposable
         {
             throw;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
             // A failed scrape must never strand the fetch: keep the tracker.
-            AppLogger.Log($"Tracker scrape: {tracker.Uri} unavailable ({exception.GetType().Name}).");
             return (tracker.Uri, false, 0, 0);
         }
     }
@@ -376,7 +317,6 @@ public sealed class TorrentEngineService : IAsyncDisposable
         {
             if (tier.Trackers.Count > 1 && tier.ActiveTracker is not null)
             {
-                AppLogger.Log($"Tracker rotation: dropping empty {tier.ActiveTracker.Uri}.");
                 await manager.TrackerManager.RemoveTrackerAsync(tier.ActiveTracker);
                 removed = true;
             }
