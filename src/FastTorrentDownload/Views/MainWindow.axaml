@@ -16,10 +16,6 @@
       <Setter Property="BorderBrush" Value="{DynamicResource HeaderForegroundBrush}" />
       <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
-    <Style Selector="ListBoxItem">
-      <Setter Property="Padding" Value="0" />
-      <Setter Property="Margin" Value="0,0,0,8" />
-    </Style>
   </Window.Styles>
 
   <Grid RowDefinitions="Auto,*,Auto,Auto">
@@ -41,10 +37,8 @@
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
           <Button Classes="theme-toggle" Content="&#x263E;"
                   Click="ThemeToggle_Click" ToolTip.Tip="Toggle dark/light theme" />
-          <Button Content="Check update" Click="Update_Click" Foreground="{DynamicResource HeaderForegroundBrush}"
-                  BorderBrush="{DynamicResource HeaderForegroundBrush}" />
-          <Button Content="Settings" Click="Settings_Click" Foreground="{DynamicResource HeaderForegroundBrush}"
-                  BorderBrush="{DynamicResource HeaderForegroundBrush}" />
+          <Button Classes="header-button" Content="Check update" Click="Update_Click" />
+          <Button Classes="header-button" Content="Settings" Click="Settings_Click" />
           <Button Classes="primary" Content="+ Add torrent" Click="Add_Click" Padding="14,8" MinHeight="0"
                   HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                   BorderBrush="{DynamicResource PrimaryButtonBackgroundBrush}" />
@@ -71,7 +65,7 @@
       <ListBox Grid.Row="1" ItemsSource="{Binding Torrents}" SelectedItem="{Binding SelectedTorrent, Mode=TwoWay}"
                BorderThickness="0" Background="Transparent">
         <ListBox.ItemTemplate>
-          <DataTemplate DataType="vm:TorrentRowViewModel">
+          <DataTemplate x:DataType="vm:TorrentRowViewModel">
             <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="1" Padding="18">
               <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="9">
                 <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="16" TextTrimming="CharacterEllipsis" />

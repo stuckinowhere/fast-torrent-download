@@ -47,7 +47,7 @@ public partial class SettingsWindow : Window
         if (!int.TryParse(ListenPortTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var listenPort) ||
             listenPort is < 1024 or > 65535)
         {
-            Title = "Settings — port must be between 1024 and 65535";
+            ShowValidationError("Port must be between 1024 and 65535.");
             return;
         }
 
@@ -57,7 +57,7 @@ public partial class SettingsWindow : Window
         }
         catch (ArgumentException exception)
         {
-            Title = $"Settings — {exception.Message}";
+            ShowValidationError(exception.Message);
             return;
         }
 
@@ -65,7 +65,7 @@ public partial class SettingsWindow : Window
             !int.TryParse(UploadLimitTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var uploadLimit) || uploadLimit < 0 ||
             !double.TryParse(SeedRatioTextBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var ratio) || ratio < 0)
         {
-            Title = "Settings — use non-negative numeric limits";
+            ShowValidationError("Use non-negative numeric limits.");
             return;
         }
 
@@ -86,4 +86,10 @@ public partial class SettingsWindow : Window
     }
 
     private void Cancel_Click(object? sender, RoutedEventArgs eventArgs) => Close(null);
+
+    private void ShowValidationError(string message)
+    {
+        ValidationErrorTextBlock.Text = message;
+        ValidationErrorTextBlock.IsVisible = true;
+    }
 }

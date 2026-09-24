@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="FastTorrentDownload.Views.AddTorrentWindow"
+        x:CompileBindings="False"
         Title="Add torrent" Width="650" SizeToContent="Height" ShowInTaskbar="False"
         CanResize="False" WindowStartupLocation="CenterOwner" DragDrop.AllowDrop="True" DragDrop.Drop="Drop_Handle">
   <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="16">
@@ -20,10 +21,8 @@
     </StackPanel>
     <CheckBox Grid.Row="2" x:Name="StartImmediatelyCheckBox" IsChecked="True" Content="Start immediately" />
     <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
-      <Button Content="Cancel" Click="Cancel_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="120"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
-      <Button Classes="primary" Content="Add torrent" Click="Add_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="120"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button Classes="dialog-footer" Content="Cancel" Click="Cancel_Click" />
+      <Button Classes="primary dialog-footer" Content="Add torrent" Click="Add_Click" />
     </StackPanel>
   </Grid>
 </Window>

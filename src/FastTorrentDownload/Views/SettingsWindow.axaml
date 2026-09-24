@@ -1,10 +1,12 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="FastTorrentDownload.Views.SettingsWindow"
-        Title="Settings" Width="1180" Height="760" ShowInTaskbar="False"
-        MinWidth="880" MinHeight="600"
+        x:CompileBindings="False"
+        Title="Settings"
+        Width="680" MinWidth="520" MaxHeight="760"
+        SizeToContent="Height" ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner">
-  <Grid Margin="24" RowDefinitions="*,Auto" RowSpacing="18">
+  <Grid Margin="24" RowDefinitions="Auto,Auto,Auto" RowSpacing="12">
     <ScrollViewer Padding="0,0,12,0">
       <StackPanel Spacing="22">
         <StackPanel Spacing="7">
@@ -59,11 +61,12 @@
 
       </StackPanel>
     </ScrollViewer>
-    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
-      <Button Content="Cancel" Click="Cancel_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="120"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
-      <Button Classes="primary" Content="Save settings" Click="Save_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="120"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+    <TextBlock Grid.Row="1" x:Name="ValidationErrorTextBlock"
+               Foreground="{DynamicResource ErrorForegroundBrush}"
+               TextWrapping="Wrap" IsVisible="False" />
+    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+      <Button Classes="dialog-footer" Content="Cancel" Click="Cancel_Click" />
+      <Button Classes="primary dialog-footer" Content="Save settings" Click="Save_Click" />
     </StackPanel>
   </Grid>
 </Window>

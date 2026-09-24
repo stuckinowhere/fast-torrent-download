@@ -34,18 +34,14 @@
       </ListBox.ItemTemplate>
     </ListBox>
 
-    <TextBlock Grid.Row="3" x:Name="StatusTextBlock" Foreground="#C62828"
+    <TextBlock Grid.Row="3" x:Name="StatusTextBlock" Foreground="{DynamicResource ErrorForegroundBrush}"
                TextWrapping="Wrap" IsVisible="False" />
 
     <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="12">
-      <Button x:Name="SelectAllButton" Content="Select all" Click="SelectAll_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110" IsEnabled="False"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
-      <Button Grid.Column="1" x:Name="SelectNoneButton" Content="Select none" Click="SelectNone_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110" IsEnabled="False"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
-      <Button Grid.Column="3" Content="Cancel" Click="Cancel_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
-      <Button Grid.Column="4" x:Name="AddSelectedButton" Classes="primary" Content="Add selected files" Click="Add_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110" IsEnabled="False"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button x:Name="SelectAllButton" Classes="dialog-footer" Content="Select all" Click="SelectAll_Click" MinWidth="110" IsEnabled="False" />
+      <Button Grid.Column="1" x:Name="SelectNoneButton" Classes="dialog-footer" Content="Select none" Click="SelectNone_Click" MinWidth="110" IsEnabled="False" />
+      <Button Grid.Column="3" Classes="dialog-footer" Content="Cancel" Click="Cancel_Click" MinWidth="110" />
+      <Button Grid.Column="4" x:Name="AddSelectedButton" Classes="primary dialog-footer" Content="Add selected files" Click="Add_Click" MinWidth="110" IsEnabled="False" />
     </Grid>
   </Grid>
 </Window>

@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="FastTorrentDownload.Views.UpdateAvailableWindow"
+        x:CompileBindings="False"
         Title="Update available" ShowInTaskbar="False" Width="450" SizeToContent="Height" CanResize="False" WindowStartupLocation="CenterOwner">
   <StackPanel Margin="24" Spacing="16">
     <TextBlock Text="A new version is ready" FontSize="20" FontWeight="Bold" />
@@ -10,12 +11,10 @@
       <ProgressBar x:Name="DownloadProgressBar" Minimum="0" Maximum="100" Height="8" />
       <TextBlock x:Name="StatusTextBlock" Opacity="0.8" TextWrapping="Wrap" />
     </StackPanel>
-    <TextBlock x:Name="ErrorTextBlock" Foreground="#C62828" TextWrapping="Wrap" IsVisible="False" />
+    <TextBlock x:Name="ErrorTextBlock" Foreground="{DynamicResource ErrorForegroundBrush}" TextWrapping="Wrap" IsVisible="False" />
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
-      <Button x:Name="LaterButton" Content="Later" Click="Later_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="160"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
-      <Button x:Name="InstallButton" Classes="primary" Content="Install update" Click="Install_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="160"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button x:Name="LaterButton" Classes="dialog-footer" Content="Later" Click="Later_Click" MinWidth="160" />
+      <Button x:Name="InstallButton" Classes="primary dialog-footer" Content="Install update" Click="Install_Click" MinWidth="160" />
     </StackPanel>
   </StackPanel>
 </Window>
