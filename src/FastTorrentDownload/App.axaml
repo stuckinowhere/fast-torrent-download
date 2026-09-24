@@ -12,6 +12,7 @@
           <SolidColorBrush x:Key="HeaderMutedBrush" Color="#505050" />
           <SolidColorBrush x:Key="PrimaryButtonBackgroundBrush" Color="#101010" />
           <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#FFFFFF" />
+          <SolidColorBrush x:Key="ErrorForegroundBrush" Color="#C62828" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Dark">
           <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#101010" />
@@ -20,6 +21,7 @@
           <SolidColorBrush x:Key="HeaderMutedBrush" Color="#D0D0D0" />
           <SolidColorBrush x:Key="PrimaryButtonBackgroundBrush" Color="#FFFFFF" />
           <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#000000" />
+          <SolidColorBrush x:Key="ErrorForegroundBrush" Color="#EF9A9A" />
         </ResourceDictionary>
       </ResourceDictionary.ThemeDictionaries>
     </ResourceDictionary>
@@ -51,9 +53,21 @@
       <Setter Property="MinHeight" Value="44" />
       <Setter Property="CornerRadius" Value="0" />
     </Style>
+    <Style Selector="Button.header-button">
+      <Setter Property="Foreground" Value="{DynamicResource HeaderForegroundBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource HeaderForegroundBrush}" />
+    </Style>
+    <Style Selector="Button.dialog-footer">
+      <Setter Property="Height" Value="36" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Padding" Value="14,0" />
+      <Setter Property="MinWidth" Value="120" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
     <Style Selector="ListBoxItem">
       <Setter Property="Padding" Value="0" />
-      <Setter Property="Margin" Value="0,0,0,6" />
+      <Setter Property="Margin" Value="0,0,0,8" />
     </Style>
   </Application.Styles>
 </Application>

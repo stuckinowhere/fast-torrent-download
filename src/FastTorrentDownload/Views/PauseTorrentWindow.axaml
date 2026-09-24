@@ -26,10 +26,8 @@
     </ListBox>
 
     <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
-      <Button Content="Cancel" Click="Cancel_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
-      <Button Classes="primary" Content="Pause" Click="Pause_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="110"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button Classes="dialog-footer" Content="Cancel" Click="Cancel_Click" MinWidth="110" />
+      <Button Classes="primary dialog-footer" Content="Pause" Click="Pause_Click" MinWidth="110" />
     </StackPanel>
   </Grid>
 </Window>

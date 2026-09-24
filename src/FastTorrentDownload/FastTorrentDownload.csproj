@@ -10,6 +10,7 @@
     <RootNamespace>FastTorrentDownload</RootNamespace>
     <Version>0.1.1</Version>
     <Product>fast torrent download</Product>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <!-- Views use constructor injection and compiled XAML; they are never loaded through AvaloniaXamlLoader. -->
     <NoWarn>$(NoWarn);AVLN3001</NoWarn>
   </PropertyGroup>

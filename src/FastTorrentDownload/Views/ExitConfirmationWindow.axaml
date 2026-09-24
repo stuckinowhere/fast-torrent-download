@@ -1,16 +1,16 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:FastTorrentDownload.Views"
         x:Class="FastTorrentDownload.Views.ExitConfirmationWindow"
+        x:DataType="local:ExitConfirmationWindow"
         Title="Exit safely?" ShowInTaskbar="False" Width="430" SizeToContent="Height" CanResize="False" WindowStartupLocation="CenterOwner">
   <StackPanel Margin="24" Spacing="16">
     <TextBlock Text="Exit fast torrent download?" FontSize="20" FontWeight="Bold" />
     <TextBlock Text="Active torrents will stop and the queue will be saved for your next launch." TextWrapping="Wrap" />
     <CheckBox x:Name="RememberCheckBox" Content="Don't ask again" />
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
-      <Button Content="Keep running" Click="Cancel_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="120"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
-      <Button Classes="primary" Content="Exit safely" Click="Exit_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="120"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button Classes="dialog-footer" Content="Keep running" Click="Cancel_Click" />
+      <Button Classes="primary dialog-footer" Content="Exit safely" Click="Exit_Click" />
     </StackPanel>
   </StackPanel>
 </Window>

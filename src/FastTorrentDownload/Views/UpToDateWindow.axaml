@@ -1,13 +1,14 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:FastTorrentDownload.Views"
         x:Class="FastTorrentDownload.Views.UpToDateWindow"
+        x:DataType="local:UpToDateWindow"
         Title="Up to date" ShowInTaskbar="False" Width="450" SizeToContent="Height" CanResize="False" WindowStartupLocation="CenterOwner">
   <StackPanel Margin="24" Spacing="16">
     <TextBlock Text="You're on the latest version" FontSize="20" FontWeight="Bold" />
     <TextBlock x:Name="DescriptionTextBlock" TextWrapping="Wrap" />
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
-      <Button Classes="primary" Content="OK" Click="Ok_Click" Height="36" MinHeight="0" Padding="14,0" MinWidth="160"
-              HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button Classes="primary dialog-footer" Content="OK" Click="Ok_Click" MinWidth="160" />
     </StackPanel>
   </StackPanel>
 </Window>
