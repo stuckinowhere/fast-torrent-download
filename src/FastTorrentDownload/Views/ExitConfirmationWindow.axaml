@@ -1,7 +1,8 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:FastTorrentDownload.Views"
         x:Class="FastTorrentDownload.Views.ExitConfirmationWindow"
-        x:CompileBindings="False"
+        x:DataType="local:ExitConfirmationWindow"
         Title="Exit safely?" ShowInTaskbar="False" Width="430" SizeToContent="Height" CanResize="False" WindowStartupLocation="CenterOwner">
   <StackPanel Margin="24" Spacing="16">
     <TextBlock Text="Exit fast torrent download?" FontSize="20" FontWeight="Bold" />

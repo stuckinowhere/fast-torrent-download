@@ -1,7 +1,8 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:FastTorrentDownload.Views"
         x:Class="FastTorrentDownload.Views.AddTorrentWindow"
-        x:CompileBindings="False"
+        x:DataType="local:AddTorrentWindow"
         Title="Add torrent" Width="650" SizeToContent="Height" ShowInTaskbar="False"
         CanResize="False" WindowStartupLocation="CenterOwner" DragDrop.AllowDrop="True" DragDrop.Drop="Drop_Handle">
   <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="16">
