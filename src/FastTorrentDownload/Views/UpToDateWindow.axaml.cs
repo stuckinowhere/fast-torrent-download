@@ -11,5 +11,5 @@ public partial class UpToDateWindow : Window
         DescriptionTextBlock.Text = $"Installed version is {installedVersion}, which matches the latest release.";
     }
 
-    private void Ok_Click(object? sender, RoutedEventArgs eventArgs) => Close(true);
+    private void Ok_Click(object? sender, RoutedEventArgs eventArgs) => Close();
 }

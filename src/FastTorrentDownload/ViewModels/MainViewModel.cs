@@ -25,7 +25,7 @@ public sealed partial class MainViewModel(
     [ObservableProperty] private string _statusMessage = "Starting torrent engine…";
     [ObservableProperty] private string _totalDownloadRate = "↓ 0 B/s";
     [ObservableProperty] private string _totalUploadRate = "↑ 0 B/s";
-    [ObservableProperty] private string _queueSummary = "No torrents";
+    [ObservableProperty] private string _queueSummary = "0 torrents";
 
     public AppSettings Settings => _settings;
 
@@ -45,7 +45,6 @@ public sealed partial class MainViewModel(
         await _engine.InitializeAsync(_settings);
         await RefreshAsync();
         StatusMessage = "Ready — add a magnet link or .torrent file.";
-        // Update prompts are driven by the main window so a dialog can be shown.
     }
 
     public Task<TorrentAddPreview> PrepareAddAsync(string source, string? destination, CancellationToken cancellationToken = default) =>
