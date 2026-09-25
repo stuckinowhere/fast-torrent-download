@@ -38,13 +38,12 @@ public partial class SelectTorrentFilesWindow : Window
 {
     public SelectTorrentFilesWindow(string torrentName)
     {
-        TorrentName = torrentName;
         Files = new ObservableCollection<TorrentFileSelectionItem>();
         DataContext = this;
         InitializeComponent();
+        TorrentNameTextBlock.Text = torrentName;
     }
 
-    public string TorrentName { get; }
     public ObservableCollection<TorrentFileSelectionItem> Files { get; }
 
     public void ShowPreview(TorrentAddPreview preview)
@@ -68,15 +67,13 @@ public partial class SelectTorrentFilesWindow : Window
         AddSelectedButton.IsEnabled = true;
     }
 
-    public void FailAndClose(string message)
+    public void FailAndClose()
     {
         if (!IsVisible)
         {
             return;
         }
 
-        StatusTextBlock.Text = message;
-        StatusTextBlock.IsVisible = true;
         Close(null);
     }
 

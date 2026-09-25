@@ -98,7 +98,7 @@ public partial class MainWindow : Window
             }
 
             loadError = exception.Message;
-            picker.FailAndClose($"Could not load files: {loadError}");
+            picker.FailAndClose();
         }
 
         if (preview is not null)
@@ -183,7 +183,7 @@ public partial class MainWindow : Window
         {
             if (!quiet)
             {
-                await new UpToDateWindow(_viewModel.AppVersionLabel) { Icon = Icon }.ShowDialog<bool>(this);
+                await new UpToDateWindow(_viewModel.AppVersionLabel) { Icon = Icon }.ShowDialog(this);
             }
 
             return;

@@ -5,7 +5,7 @@ namespace FastTorrentDownload.ViewModels;
 
 public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : ObservableObject
 {
-    [ObservableProperty] private string _id = snapshot.Id;
+    public string Id { get; } = snapshot.Id;
     [ObservableProperty] private string _name = snapshot.Name;
     [ObservableProperty] private string _destination = snapshot.Destination;
     [ObservableProperty] private string _state = snapshot.State;
