@@ -20,7 +20,7 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     public string ProgressLabel => $"{Progress:0.0}%";
     public string TransferLabel => $"↓ {FormatRate(DownloadRate)}   ↑ {FormatRate(UploadRate)}";
     public string DetailLabel => $"{FormatBytes(DownloadedBytes)} received · ratio {Ratio:0.00} · {SeederCount} seeders · {LeecherCount} peers";
-    public double Ratio => DownloadedBytes == 0 ? 0 : (double)UploadedBytes / DownloadedBytes;
+    private double Ratio => DownloadedBytes == 0 ? 0 : (double)UploadedBytes / DownloadedBytes;
 
     public void Update(TorrentSnapshot snapshot)
     {
@@ -49,12 +49,11 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
         OnPropertyChanged(nameof(ProgressLabel));
         OnPropertyChanged(nameof(TransferLabel));
         OnPropertyChanged(nameof(DetailLabel));
-        OnPropertyChanged(nameof(Ratio));
     }
 
     public static string FormatRate(long bytesPerSecond) => $"{FormatBytes(bytesPerSecond)}/s";
 
-    public static string FormatBytes(long bytes)
+    private static string FormatBytes(long bytes)
     {
         string[] units = ["B", "KB", "MB", "GB", "TB"];
         var value = Math.Max(0, bytes);

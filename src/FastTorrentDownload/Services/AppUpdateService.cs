@@ -29,7 +29,7 @@ public sealed class AppUpdateService
         return packagePath;
     }
 
-    public string StageAndLaunchInstaller(string packagePath, string tag)
+    public void StageAndLaunchInstaller(string packagePath, string tag)
     {
         var installDirectory = AppContext.BaseDirectory;
         var executablePath = Path.Combine(installDirectory, "FastTorrentDownload.exe");
@@ -57,7 +57,6 @@ public sealed class AppUpdateService
             WorkingDirectory = Path.GetTempPath()
         });
         AppLogger.Log($"Update installer staged for {tag}; exiting for replacement.");
-        return scriptPath;
     }
 
     public static string? ParseChecksumFile(string content, string packageFileName)
@@ -74,7 +73,7 @@ public sealed class AppUpdateService
         return null;
     }
 
-    public static string PackageFileName(Uri packageUrl) =>
+    private static string PackageFileName(Uri packageUrl) =>
         Path.GetFileName(Uri.UnescapeDataString(packageUrl.AbsolutePath)) is { Length: > 0 } name
             ? name
             : "update-portable.zip";

@@ -402,21 +402,21 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
     public IReadOnlySet<string> PausedInfoHashes => _pausedHashes;
 
-    public async Task StartAsync(string id, CancellationToken cancellationToken = default)
+    public async Task StartAsync(string id)
     {
         var manager = Find(id);
         _pausedHashes.Remove(DescribeInfoHashes(manager.InfoHashes));
         await manager.StartAsync();
     }
 
-    public async Task PauseAsync(string id, CancellationToken cancellationToken = default)
+    public async Task PauseAsync(string id)
     {
         var manager = Find(id);
         _pausedHashes.Add(DescribeInfoHashes(manager.InfoHashes));
         await manager.StopAsync();
     }
 
-    public async Task RecheckAsync(string id, CancellationToken cancellationToken = default)
+    public async Task RecheckAsync(string id)
     {
         var manager = Find(id);
         _pausedHashes.Remove(DescribeInfoHashes(manager.InfoHashes));
@@ -514,11 +514,11 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public async Task EnforceRatioPolicyAsync(CancellationToken cancellationToken = default)
+    public async Task EnforceRatioPolicyAsync()
     {
         foreach (var snapshot in (await GetSnapshotsAsync(includePeerCounts: false)).Where(snapshot => QueueCoordinator.ShouldPauseForRatio(snapshot, _settings)))
         {
-            await PauseAsync(snapshot.Id, cancellationToken);
+            await PauseAsync(snapshot.Id);
         }
     }
 
@@ -605,11 +605,10 @@ public sealed class TorrentEngineService : IAsyncDisposable
     private static bool IsRecoverableStateException(Exception exception) =>
         exception is IOException or InvalidDataException or ArgumentException or System.Text.Json.JsonException;
 
-    private string Track(TorrentManager manager, string destination)
+    private void Track(TorrentManager manager, string destination)
     {
         var id = Guid.NewGuid().ToString("N");
         _entries[id] = (manager, destination);
-        return id;
     }
 
     private TorrentManager Find(string id) =>
