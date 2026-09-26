@@ -144,6 +144,17 @@ public sealed partial class MainViewModel(
         return Directory.Exists(candidate) ? candidate : null;
     }
 
+    public static bool PauseIntentsDiffer(IReadOnlySet<string> persisted, IReadOnlySet<string> live) =>
+        !persisted.SetEquals(live);
+
+    private async Task SyncPauseIntentsIfChangedAsync()
+    {
+        if (PauseIntentsDiffer(_settings.PausedInfoHashes, _engine.PausedInfoHashes))
+        {
+            await SyncPauseIntentsAsync();
+        }
+    }
+
     private async Task SyncPauseIntentsAsync()
     {
         _settings.PausedInfoHashes = new HashSet<string>(_engine.PausedInfoHashes, StringComparer.OrdinalIgnoreCase);
@@ -218,6 +229,7 @@ public sealed partial class MainViewModel(
         try
         {
             await _engine.EnforceRatioPolicyAsync();
+            await SyncPauseIntentsIfChangedAsync();
             var snapshots = await _engine.GetSnapshotsAsync();
             var rowsById = Torrents.ToDictionary(row => row.Id);
             foreach (var snapshot in snapshots)
@@ -258,7 +270,19 @@ public sealed partial class MainViewModel(
         }
     }
 
-    public Task ShutdownAsync() => _engine.DisposeAsync().AsTask();
+    public async Task ShutdownAsync()
+    {
+        try
+        {
+            await SyncPauseIntentsIfChangedAsync();
+        }
+        catch (Exception exception)
+        {
+            AppLogger.LogException("Could not persist pause intents on shutdown", exception);
+        }
+
+        await _engine.DisposeAsync();
+    }
 
     private static void ApplyTheme(string theme)
     {
