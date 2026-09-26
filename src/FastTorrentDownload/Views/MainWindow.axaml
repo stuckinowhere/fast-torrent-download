@@ -9,14 +9,6 @@
         ShowInTaskbar="True"
         DragDrop.AllowDrop="True" DragDrop.Drop="Drop_Handle"
         Background="{DynamicResource WindowBackgroundBrush}">
-  <Window.Styles>
-    <Style Selector="Button.theme-toggle">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Foreground" Value="{DynamicResource HeaderForegroundBrush}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource HeaderForegroundBrush}" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-    </Style>
-  </Window.Styles>
 
   <Grid RowDefinitions="Auto,*,Auto,Auto">
     <Border Grid.Row="0" Background="{DynamicResource HeaderBackgroundBrush}" Padding="28,20">
@@ -35,7 +27,7 @@
           </StackPanel>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-          <Button Classes="theme-toggle" Content="&#x263E;"
+          <Button Classes="header-button" Content="&#x263E;"
                   Click="ThemeToggle_Click" ToolTip.Tip="Toggle dark/light theme" />
           <Button Classes="header-button" Content="Check update" Click="Update_Click" />
           <Button Classes="header-button" Content="Settings" Click="Settings_Click" />
