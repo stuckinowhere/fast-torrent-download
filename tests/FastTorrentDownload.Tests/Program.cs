@@ -185,6 +185,22 @@ Check("pause intents copy and normalize without aliasing", () =>
     Require(settings.PausedInfoHashes.Count == 1 && settings.PausedInfoHashes.Contains("ABCDEF"));
 });
 
+Check("paused torrents are not started on restore", () =>
+{
+    var paused = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "abc" };
+    Require(!TorrentEngineService.ShouldResumeRestoredTorrent("abc", paused));
+    Require(!TorrentEngineService.ShouldResumeRestoredTorrent("ABC", paused));
+    Require(TorrentEngineService.ShouldResumeRestoredTorrent("def", paused));
+    Require(TorrentEngineService.ShouldResumeRestoredTorrent("abc", new HashSet<string>()));
+});
+
+Check("restored torrents keep their real save path", () =>
+{
+    Require(TorrentEngineService.RestoredDestination(@"C:\Downloads\linux.iso") == @"C:\Downloads\linux.iso");
+    Require(TorrentEngineService.RestoredDestination("  ") == "Restored download");
+    Require(TorrentEngineService.RestoredDestination(null) == "Restored download");
+});
+
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 

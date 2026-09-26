@@ -54,22 +54,25 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
             foreach (var manager in _engine.Torrents)
             {
-                Track(manager, "Restored download");
+                Track(manager, RestoredDestination(manager.SavePath));
                 await manager.UpdateSettingsAsync(CreateTorrentSettings(_settings));
             }
 
-            await _engine.StartAllAsync();
+            var resumed = 0;
             var repaused = 0;
             foreach (var manager in _engine.Torrents)
             {
-                if (_pausedHashes.Contains(DescribeInfoHashes(manager.InfoHashes)))
+                if (!ShouldResumeRestoredTorrent(DescribeInfoHashes(manager.InfoHashes), _pausedHashes))
                 {
-                    await manager.StopAsync();
                     repaused++;
+                    continue;
                 }
+
+                await manager.StartAsync();
+                resumed++;
             }
 
-            AppLogger.Log($"Engine started: resumed {_engine.Torrents.Count} restored torrent(s), kept {repaused} paused.");
+            AppLogger.Log($"Engine started: resumed {resumed} restored torrent(s), kept {repaused} paused.");
         }
         finally
         {
@@ -299,6 +302,19 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
     public static bool ShouldRotateTrackerCoverage(int knownPeers, int openConnections) =>
         knownPeers < 2 && openConnections == 0;
+
+    /// <summary>
+    /// Paused torrents must not be started on restore, even briefly:
+    /// StartAll-then-Stop races the swarm and can download before Stop lands.
+    /// </summary>
+    public static bool ShouldResumeRestoredTorrent(string infoHash, IReadOnlySet<string> pausedHashes) =>
+        !pausedHashes.Contains(infoHash);
+
+    /// <summary>
+    /// Restore the real save path so Open folder works after a restart.
+    /// </summary>
+    public static string RestoredDestination(string? savePath) =>
+        string.IsNullOrWhiteSpace(savePath) ? "Restored download" : savePath;
 
     private static async Task<bool> RotateStarvedTrackersAsync(TorrentManager manager, CancellationToken cancellationToken)
     {
