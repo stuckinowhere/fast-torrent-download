@@ -139,7 +139,7 @@ Check("show folder falls back to the default download folder when nothing is sel
     Require(MainViewModel.ResolveFolderToOpen(null, missing) is null);
     var selectedMissing = new TorrentRowViewModel(Snapshot(progress: 10, downloaded: 1, uploaded: 0));
     Require(MainViewModel.ResolveFolderToOpen(selectedMissing, settings) is null);
-    var selected = new TorrentRowViewModel(new TorrentSnapshot("t", "t", Path.GetTempPath(), "Downloading", 10, 0, 0, 1, 0, false, 0, 0));
+    var selected = new TorrentRowViewModel(new TorrentSnapshot("t", "t", Path.GetTempPath(), "Downloading", 10, 0, 0, 1, 0, 0, 0));
     Require(MainViewModel.ResolveFolderToOpen(selected, settings) == Path.GetTempPath());
 });
 
@@ -196,7 +196,7 @@ void Check(string name, Action action)
 }
 
 static TorrentSnapshot Snapshot(double progress, long downloaded, long uploaded, string state = "Seeding", int seeders = 0, int leechers = 0) => new(
-    "test", "test", "test", state, progress, 0, 0, downloaded, uploaded, progress >= 100, seeders, leechers);
+    "test", "test", "test", state, progress, 0, 0, downloaded, uploaded, seeders, leechers);
 
 static void Require(bool condition)
 {

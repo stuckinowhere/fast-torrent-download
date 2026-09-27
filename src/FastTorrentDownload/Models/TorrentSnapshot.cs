@@ -10,7 +10,6 @@ public sealed record TorrentSnapshot(
     long UploadRate,
     long DownloadedBytes,
     long UploadedBytes,
-    bool IsComplete,
     int SeederCount,
     int LeecherCount)
 {

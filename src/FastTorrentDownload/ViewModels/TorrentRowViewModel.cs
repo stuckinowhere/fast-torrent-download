@@ -10,17 +10,17 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     [ObservableProperty] private string _destination = snapshot.Destination;
     [ObservableProperty] private string _state = snapshot.State;
     [ObservableProperty] private double _progress = snapshot.Progress;
-    [ObservableProperty] private long _downloadRate = snapshot.DownloadRate;
-    [ObservableProperty] private long _uploadRate = snapshot.UploadRate;
-    [ObservableProperty] private long _downloadedBytes = snapshot.DownloadedBytes;
-    [ObservableProperty] private long _uploadedBytes = snapshot.UploadedBytes;
-    [ObservableProperty] private int _seederCount = snapshot.SeederCount;
-    [ObservableProperty] private int _leecherCount = snapshot.LeecherCount;
+    private long _downloadRate = snapshot.DownloadRate;
+    private long _uploadRate = snapshot.UploadRate;
+    private long _downloadedBytes = snapshot.DownloadedBytes;
+    private long _uploadedBytes = snapshot.UploadedBytes;
+    private int _seederCount = snapshot.SeederCount;
+    private int _leecherCount = snapshot.LeecherCount;
 
     public string ProgressLabel => $"{Progress:0.0}%";
-    public string TransferLabel => $"↓ {FormatRate(DownloadRate)}   ↑ {FormatRate(UploadRate)}";
-    public string DetailLabel => $"{FormatBytes(DownloadedBytes)} received · ratio {Ratio:0.00} · {SeederCount} seeders · {LeecherCount} peers";
-    private double Ratio => DownloadedBytes == 0 ? 0 : (double)UploadedBytes / DownloadedBytes;
+    public string TransferLabel => $"↓ {FormatRate(_downloadRate)}   ↑ {FormatRate(_uploadRate)}";
+    public string DetailLabel => $"{FormatBytes(_downloadedBytes)} received · ratio {Ratio:0.00} · {_seederCount} seeders · {_leecherCount} peers";
+    private double Ratio => _downloadedBytes == 0 ? 0 : (double)_uploadedBytes / _downloadedBytes;
 
     public void Update(TorrentSnapshot snapshot)
     {
@@ -28,28 +28,17 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
         Destination = snapshot.Destination;
         State = snapshot.State;
         Progress = snapshot.Progress;
-        DownloadRate = snapshot.DownloadRate;
-        UploadRate = snapshot.UploadRate;
-        DownloadedBytes = snapshot.DownloadedBytes;
-        UploadedBytes = snapshot.UploadedBytes;
-        SeederCount = snapshot.SeederCount;
-        LeecherCount = snapshot.LeecherCount;
-        NotifyDerivedProperties();
-    }
-
-    partial void OnProgressChanged(double value) => NotifyDerivedProperties();
-    partial void OnDownloadRateChanged(long value) => OnPropertyChanged(nameof(TransferLabel));
-    partial void OnUploadRateChanged(long value) => OnPropertyChanged(nameof(TransferLabel));
-    partial void OnDownloadedBytesChanged(long value) => NotifyDerivedProperties();
-    partial void OnUploadedBytesChanged(long value) => NotifyDerivedProperties();
-    partial void OnSeederCountChanged(int value) => NotifyDerivedProperties();
-    partial void OnLeecherCountChanged(int value) => NotifyDerivedProperties();
-    private void NotifyDerivedProperties()
-    {
-        OnPropertyChanged(nameof(ProgressLabel));
+        _downloadRate = snapshot.DownloadRate;
+        _uploadRate = snapshot.UploadRate;
+        _downloadedBytes = snapshot.DownloadedBytes;
+        _uploadedBytes = snapshot.UploadedBytes;
+        _seederCount = snapshot.SeederCount;
+        _leecherCount = snapshot.LeecherCount;
         OnPropertyChanged(nameof(TransferLabel));
         OnPropertyChanged(nameof(DetailLabel));
     }
+
+    partial void OnProgressChanged(double value) => OnPropertyChanged(nameof(ProgressLabel));
 
     public static string FormatRate(long bytesPerSecond) => $"{FormatBytes(bytesPerSecond)}/s";
 
