@@ -13,7 +13,7 @@ public sealed class AppPaths
         EngineStateFile = Path.Combine(RootDirectory, "engine-state.json");
     }
 
-    public string RootDirectory { get; }
+    private string RootDirectory { get; }
     public string CacheDirectory { get; }
     public string LogsDirectory { get; }
     public string SettingsFile { get; }

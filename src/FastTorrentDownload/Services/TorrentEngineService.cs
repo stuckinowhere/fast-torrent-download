@@ -485,7 +485,6 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 monitor.UploadRate,
                 downloaded,
                 uploaded,
-                manager.Progress >= 100,
                 seeders,
                 leechers));
         }
