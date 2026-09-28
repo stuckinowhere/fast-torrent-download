@@ -11,7 +11,7 @@ public sealed class SettingsStore(AppPaths paths)
         PropertyNameCaseInsensitive = true
     };
 
-    public async Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default)
+    public async Task<AppSettings> LoadAsync()
     {
         paths.EnsureDirectories();
         if (!File.Exists(paths.SettingsFile))
@@ -22,7 +22,7 @@ public sealed class SettingsStore(AppPaths paths)
         try
         {
             await using var stream = File.OpenRead(paths.SettingsFile);
-            var settings = await JsonSerializer.DeserializeAsync<AppSettings>(stream, JsonOptions, cancellationToken);
+            var settings = await JsonSerializer.DeserializeAsync<AppSettings>(stream, JsonOptions);
             settings ??= new AppSettings();
             settings.Normalize();
             return settings;
@@ -37,7 +37,7 @@ public sealed class SettingsStore(AppPaths paths)
         }
     }
 
-    public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
+    public async Task SaveAsync(AppSettings settings)
     {
         settings.Normalize();
         paths.EnsureDirectories();
@@ -47,7 +47,7 @@ public sealed class SettingsStore(AppPaths paths)
         {
             await using (var stream = File.Create(temporaryFile))
             {
-                await JsonSerializer.SerializeAsync(stream, settings, JsonOptions, cancellationToken);
+                await JsonSerializer.SerializeAsync(stream, settings, JsonOptions);
             }
 
             File.Move(temporaryFile, paths.SettingsFile, overwrite: true);
