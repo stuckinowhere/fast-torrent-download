@@ -185,6 +185,16 @@ Check("pause intents copy and normalize without aliasing", () =>
     Require(settings.PausedInfoHashes.Count == 1 && settings.PausedInfoHashes.Contains("ABCDEF"));
 });
 
+Check("ratio-enforced pauses are persisted when they diverge from settings", () =>
+{
+    var persisted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "abc" };
+    Require(MainViewModel.PauseIntentsDiffer(persisted, live));
+    Require(MainViewModel.PauseIntentsDiffer(live, persisted));
+    Require(!MainViewModel.PauseIntentsDiffer(live, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ABC" }));
+    Require(!MainViewModel.PauseIntentsDiffer(persisted, new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
+});
+
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 
