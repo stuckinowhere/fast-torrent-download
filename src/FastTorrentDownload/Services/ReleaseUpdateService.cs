@@ -13,24 +13,20 @@ public sealed class ReleaseUpdateService
 
     private static readonly HttpClient Client = CreateClient();
 
-    public async Task<AvailableUpdate?> CheckAsync(Version installedVersion, CancellationToken cancellationToken = default)
+    public async Task<AvailableUpdate?> CheckAsync(Version installedVersion)
     {
-        using var response = await Client.GetAsync($"repos/{Repository}/releases/latest", cancellationToken);
+        using var response = await Client.GetAsync($"repos/{Repository}/releases/latest");
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return null;
         }
 
         response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var document = await JsonDocument.ParseAsync(stream);
         var root = document.RootElement;
         var tag = root.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() : null;
-        var page = root.TryGetProperty("html_url", out var pageElement) ? pageElement.GetString() : null;
         if (string.IsNullOrWhiteSpace(tag) || !Version.TryParse(tag.TrimStart('v', 'V'), out var version) ||
-            !Uri.TryCreate(page, UriKind.Absolute, out var releasePage) ||
-            !string.Equals(releasePage.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(releasePage.Host, "github.com", StringComparison.OrdinalIgnoreCase) ||
             version <= installedVersion)
         {
             return null;

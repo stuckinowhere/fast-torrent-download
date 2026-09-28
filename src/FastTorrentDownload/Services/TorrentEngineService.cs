@@ -20,9 +20,9 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
     public TorrentEngineService(AppPaths paths) => _paths = paths;
 
-    public async Task InitializeAsync(AppSettings settings, CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(AppSettings settings)
     {
-        await _gate.WaitAsync(cancellationToken);
+        await _gate.WaitAsync();
         try
         {
             ThrowIfDisposed();
@@ -35,7 +35,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             _settings.Normalize();
             _pausedHashes.UnionWith(_settings.PausedInfoHashes);
             _paths.EnsureDirectories();
-            await DhtBootstrapCache.EnsureSeededAsync(_paths.CacheDirectory, cancellationToken);
+            await DhtBootstrapCache.EnsureSeededAsync(_paths.CacheDirectory);
             if (File.Exists(_paths.EngineStateFile))
             {
                 try
@@ -341,15 +341,14 @@ public sealed class TorrentEngineService : IAsyncDisposable
     public async Task CommitAddAsync(
         TorrentAddPreview preview,
         IReadOnlyCollection<string> selectedFiles,
-        bool startImmediately,
-        CancellationToken cancellationToken = default)
+        bool startImmediately)
     {
         if (selectedFiles.Count == 0)
         {
             throw new ArgumentException("Select at least one file to download.", nameof(selectedFiles));
         }
 
-        await _gate.WaitAsync(cancellationToken);
+        await _gate.WaitAsync();
         try
         {
             if (!_pending.TryGetValue(preview.Id, out var pending))
@@ -383,9 +382,9 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public async Task CancelAddAsync(string id, CancellationToken cancellationToken = default)
+    public async Task CancelAddAsync(string id)
     {
-        await _gate.WaitAsync(cancellationToken);
+        await _gate.WaitAsync();
         try
         {
             var engine = RequireEngine();
@@ -423,9 +422,9 @@ public sealed class TorrentEngineService : IAsyncDisposable
         await manager.HashCheckAsync(autoStart: true);
     }
 
-    public async Task RemoveAsync(string id, CancellationToken cancellationToken = default)
+    public async Task RemoveAsync(string id)
     {
-        await _gate.WaitAsync(cancellationToken);
+        await _gate.WaitAsync();
         try
         {
             var engine = RequireEngine();
@@ -443,9 +442,9 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public async Task ApplySettingsAsync(AppSettings settings, CancellationToken cancellationToken = default)
+    public async Task ApplySettingsAsync(AppSettings settings)
     {
-        await _gate.WaitAsync(cancellationToken);
+        await _gate.WaitAsync();
         try
         {
             settings.Normalize();
