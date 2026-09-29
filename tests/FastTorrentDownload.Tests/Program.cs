@@ -10,26 +10,26 @@ Check("ratio policy pauses completed torrents at the target", () =>
 {
     var settings = new AppSettings { SeedRatioTarget = 1.0 };
     var completed = Snapshot(progress: 100, downloaded: 1_000, uploaded: 1_000);
-    Require(QueueCoordinator.ShouldPauseForRatio(completed, settings));
+    Require(TorrentEngineService.ShouldPauseForRatio(completed, settings));
 });
 
 Check("ratio policy keeps incomplete or below-target torrents active", () =>
 {
     var settings = new AppSettings { SeedRatioTarget = 1.0 };
-    Require(!QueueCoordinator.ShouldPauseForRatio(Snapshot(progress: 99.9, downloaded: 1_000, uploaded: 2_000), settings));
-    Require(!QueueCoordinator.ShouldPauseForRatio(Snapshot(progress: 100, downloaded: 1_000, uploaded: 999), settings));
+    Require(!TorrentEngineService.ShouldPauseForRatio(Snapshot(progress: 99.9, downloaded: 1_000, uploaded: 2_000), settings));
+    Require(!TorrentEngineService.ShouldPauseForRatio(Snapshot(progress: 100, downloaded: 1_000, uploaded: 999), settings));
 });
 
 Check("zero ratio target leaves seeding under user control", () =>
 {
     var settings = new AppSettings { SeedRatioTarget = 0 };
-    Require(!QueueCoordinator.ShouldPauseForRatio(Snapshot(progress: 100, downloaded: 1_000, uploaded: 10_000), settings));
+    Require(!TorrentEngineService.ShouldPauseForRatio(Snapshot(progress: 100, downloaded: 1_000, uploaded: 10_000), settings));
 });
 
 Check("a stopped completed torrent is not stopped again by ratio enforcement", () =>
 {
     var settings = new AppSettings { SeedRatioTarget = 1.0 };
-    Require(!QueueCoordinator.ShouldPauseForRatio(Snapshot(progress: 100, downloaded: 1_000, uploaded: 2_000, state: "Stopped"), settings));
+    Require(!TorrentEngineService.ShouldPauseForRatio(Snapshot(progress: 100, downloaded: 1_000, uploaded: 2_000, state: "Stopped"), settings));
 });
 
 Check("listener binding accepts IPv4 and rejects ambiguous inputs", () =>
