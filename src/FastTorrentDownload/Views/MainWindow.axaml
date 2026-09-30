@@ -31,9 +31,7 @@
                   Click="ThemeToggle_Click" ToolTip.Tip="Toggle dark/light theme" />
           <Button Classes="header-button" Content="Check update" Click="Update_Click" />
           <Button Classes="header-button" Content="Settings" Click="Settings_Click" />
-          <Button Classes="primary" Content="+ Add torrent" Click="Add_Click" Padding="14,8" MinHeight="0"
-                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
-                  BorderBrush="{DynamicResource PrimaryButtonBackgroundBrush}" />
+          <Button Classes="primary header-button" Content="+ Add torrent" Click="Add_Click" />
         </StackPanel>
       </Grid>
     </Border>
