@@ -278,7 +278,7 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
         await File.WriteAllBytesAsync(pendingSource, torrent.Encode());
         var pending = await service.PrepareAddAsync(pendingSource, root);
         Require((await service.GetSnapshotsAsync()).Count == 2);
-        var viewModel = new MainViewModel(service, new SettingsStore(new AppPaths()), new ReleaseUpdateService());
+        var viewModel = new MainViewModel(service, new SettingsStore(paths), new ReleaseUpdateService());
         await viewModel.RefreshAsync();
         Require(viewModel.Torrents.Count == 2 && viewModel.QueueSummary == "2 torrents");
         viewModel.SelectedTorrent = viewModel.Torrents.Single(row => row.Name == "completion-check");
@@ -292,7 +292,21 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
         }
         if (manualRemoval)
         {
-            await service.RemoveAsync(preview.Id);
+            var showedStopping = false;
+            viewModel.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(MainViewModel.StatusMessage) &&
+                    viewModel.StatusMessage == "Stopping completion-check before removing…")
+                {
+                    Require(engine.Torrents.Contains(manager));
+                    showedStopping = true;
+                }
+            };
+            await viewModel.RemoveSelectedAsync();
+            Require(showedStopping);
+            Require(viewModel.StatusMessage == "Removed completion-check; downloaded files were kept.");
+            await viewModel.RemoveSelectedAsync();
+            Require(viewModel.StatusMessage == "Select a torrent first.");
         }
         else
         {
