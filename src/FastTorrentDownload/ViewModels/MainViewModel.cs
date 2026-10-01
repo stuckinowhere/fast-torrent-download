@@ -106,6 +106,7 @@ public sealed partial class MainViewModel(
         }
 
         var name = SelectedTorrent.Name;
+        StatusMessage = $"Stopping {name} before removing…";
         await _engine.RemoveAsync(SelectedTorrent.Id);
         await SyncPauseIntentsAsync();
         SelectedTorrent = null;
