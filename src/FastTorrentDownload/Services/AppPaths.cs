@@ -2,9 +2,9 @@ namespace FastTorrentDownload.Services;
 
 public sealed class AppPaths
 {
-    public AppPaths()
+    public AppPaths(string? rootDirectory = null)
     {
-        RootDirectory = Path.Combine(
+        RootDirectory = rootDirectory ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "fast-torrent-download");
         CacheDirectory = Path.Combine(RootDirectory, "cache");

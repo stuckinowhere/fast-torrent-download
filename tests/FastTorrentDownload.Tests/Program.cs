@@ -203,7 +203,8 @@ Check("pause intents copy and normalize without aliasing", () =>
 
 await CheckCompletedRemovalAsync(selectedOnly: true);
 await CheckCompletedRemovalAsync(selectedOnly: false);
-passed += 2;
+await CheckCompletedRemovalAsync(selectedOnly: true, manualRemoval: true);
+passed += 3;
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 
@@ -225,7 +226,7 @@ static void Require(bool condition)
     }
 }
 
-static async Task CheckCompletedRemovalAsync(bool selectedOnly)
+static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemoval = false)
 {
     var root = Path.Combine(Path.GetTempPath(), "fast-torrent-completion-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(root);
@@ -258,17 +259,30 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly)
             AllowLocalPeerDiscovery = false,
             AllowPortForwarding = false
         }.ToSettings());
-        var service = new TorrentEngineService(new AppPaths());
+        var paths = new AppPaths(Path.Combine(root, "app-state"));
+        paths.EnsureDirectories();
+        var service = new TorrentEngineService(paths);
         // Inject an isolated offline engine so the check never touches the user's saved queue.
         typeof(TorrentEngineService).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(service, engine);
         var preview = await service.PrepareAddAsync(source, root);
         await service.CommitAddAsync(preview, selectedOnly ? ["selected.bin"] : ["selected.bin", "skipped.bin"], startImmediately: false);
-        Require((await service.GetSnapshotsAsync()).Count == 1);
+        ((BEncodedDictionary)torrent["info"])["name"] = new BEncodedString("survivor-check");
+        var survivorSource = Path.Combine(root, "survivor.torrent");
+        await File.WriteAllBytesAsync(survivorSource, torrent.Encode());
+        var survivor = await service.PrepareAddAsync(survivorSource, root);
+        await service.CommitAddAsync(survivor, ["selected.bin"], startImmediately: false);
+        await engine.SaveStateAsync(paths.EngineStateFile);
+        // An unconfirmed add must not enter the saved queue when another torrent is removed.
+        ((BEncodedDictionary)torrent["info"])["name"] = new BEncodedString("pending-check");
+        var pendingSource = Path.Combine(root, "pending.torrent");
+        await File.WriteAllBytesAsync(pendingSource, torrent.Encode());
+        var pending = await service.PrepareAddAsync(pendingSource, root);
+        Require((await service.GetSnapshotsAsync()).Count == 2);
         var viewModel = new MainViewModel(service, new SettingsStore(new AppPaths()), new ReleaseUpdateService());
         await viewModel.RefreshAsync();
-        Require(viewModel.Torrents.Count == 1 && viewModel.QueueSummary == "1 torrent");
-        viewModel.SelectedTorrent = viewModel.Torrents.Single();
-        var manager = engine.Torrents.Single();
+        Require(viewModel.Torrents.Count == 2 && viewModel.QueueSummary == "2 torrents");
+        viewModel.SelectedTorrent = viewModel.Torrents.Single(row => row.Name == "completion-check");
+        var manager = engine.Torrents.Single(manager => manager.Name == "completion-check");
         var selected = manager.Files.Single(file => file.Path == "selected.bin");
         Directory.CreateDirectory(Path.GetDirectoryName(selected.FullPath)!);
         await File.WriteAllBytesAsync(selected.FullPath, data);
@@ -276,25 +290,34 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly)
         {
             await File.WriteAllBytesAsync(manager.Files.Single(file => file.Path == "skipped.bin").FullPath, data);
         }
-        await manager.HashCheckAsync(autoStart: false);
-        Require(manager.PartialProgress == 100 && manager.Complete == !selectedOnly);
-        await service.StartAsync(preview.Id);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (manager.State is not (TorrentState.Downloading or TorrentState.Seeding))
+        if (manualRemoval)
         {
-            await Task.Delay(50, timeout.Token);
+            await service.RemoveAsync(preview.Id);
+        }
+        else
+        {
+            await manager.HashCheckAsync(autoStart: false);
+            Require(manager.PartialProgress == 100 && manager.Complete == !selectedOnly);
+            await service.StartAsync(preview.Id);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (manager.State is not (TorrentState.Downloading or TorrentState.Seeding))
+            {
+                await Task.Delay(50, timeout.Token);
+            }
         }
         await viewModel.RefreshAsync();
-        Require(viewModel.Torrents.Count == 0 && viewModel.SelectedTorrent is null && viewModel.QueueSummary == "0 torrents");
-        Require((await service.GetSnapshotsAsync()).Count == 0);
-        Require(engine.Torrents.Count == 0 && service.PausedInfoHashes.Count == 0);
+        Require(viewModel.Torrents.Count == 1 && viewModel.SelectedTorrent is null && viewModel.QueueSummary == "1 torrent");
+        Require((await service.GetSnapshotsAsync()).Single().Id == survivor.Id);
+        Require(engine.Torrents.Count == 2 && service.PausedInfoHashes.Count == 1);
         Require((await File.ReadAllBytesAsync(selected.FullPath)).SequenceEqual(data));
         Require(File.Exists(source));
-        var state = Path.Combine(root, "state.json");
-        await engine.SaveStateAsync(state);
-        using var restored = await ClientEngine.RestoreStateAsync(state);
-        Require(restored.Torrents.Count == 0);
-        Console.WriteLine($"PASS offline {(selectedOnly ? "selected-file" : "full")} completion clears queue and selection, keeps files and stays removed after restore");
+        // Read the application's persisted state without saving or shutting down the service.
+        var persisted = BEncodedValue.Decode<BEncodedDictionary>(await File.ReadAllBytesAsync(paths.EngineStateFile));
+        Require(((BEncodedList)persisted["Torrents"]).Count == 1);
+        using var restored = await ClientEngine.RestoreStateAsync(paths.EngineStateFile);
+        Require(restored.Torrents.Single().Name == "survivor-check");
+        await service.CancelAddAsync(pending.Id);
+        Console.WriteLine($"PASS offline {(manualRemoval ? "manual removal" : selectedOnly ? "selected-file completion" : "full completion")} persists immediately, keeps files and excludes pending adds after restore");
     }
     finally
     {
