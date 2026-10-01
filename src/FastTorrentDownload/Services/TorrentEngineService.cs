@@ -1,6 +1,7 @@
 using System.Net;
 using FastTorrentDownload.Models;
 using MonoTorrent;
+using MonoTorrent.BEncoding;
 using MonoTorrent.Client;
 using MonoTorrent.Connections;
 using MonoTorrent.Trackers;
@@ -437,6 +438,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             await engine.RemoveAsync(entry.Manager);
             _entries.Remove(id);
             _pausedHashes.Remove(DescribeInfoHashes(entry.Manager.InfoHashes));
+            await SaveStateAsync();
         }
         finally
         {
@@ -564,7 +566,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 try
                 {
                     await _engine.StopAllAsync(TimeSpan.FromSeconds(2));
-                    await _engine.SaveStateAsync(_paths.EngineStateFile);
+                    await SaveStateAsync();
                 }
                 finally
                 {
@@ -577,6 +579,35 @@ public sealed class TorrentEngineService : IAsyncDisposable
         {
             _gate.Release();
             _gate.Dispose();
+        }
+    }
+
+    // Caller holds _gate so queue changes cannot race the snapshot or file replacement.
+    private async Task SaveStateAsync()
+    {
+        var state = BEncodedValue.Decode<BEncodedDictionary>(await RequireEngine().SaveStateAsync());
+        var committed = _entries.Values.Select(entry => entry.Manager.MagnetLink.ToV1String()).ToHashSet();
+        var torrents = (BEncodedList)state[nameof(ClientEngine.Torrents)];
+        for (var index = torrents.Count - 1; index >= 0; index--)
+        {
+            if (!committed.Contains(((BEncodedString)((BEncodedDictionary)torrents[index])[nameof(TorrentManager.MagnetLink)]).Text))
+            {
+                torrents.RemoveAt(index);
+            }
+        }
+
+        var temporaryFile = $"{_paths.EngineStateFile}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await File.WriteAllBytesAsync(temporaryFile, state.Encode());
+            File.Move(temporaryFile, _paths.EngineStateFile, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryFile))
+            {
+                File.Delete(temporaryFile);
+            }
         }
     }
 
