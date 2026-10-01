@@ -3,8 +3,24 @@ using FastTorrentDownload.Services;
 using FastTorrentDownload.ViewModels;
 using System.Linq;
 using System.Net;
+using MonoTorrent.Client;
+using MonoTorrent;
+using MonoTorrent.BEncoding;
+using System.Reflection;
+using System.Security.Cryptography;
 
 var passed = 0;
+
+Check("completed selected files are removed only in a verified download state", () =>
+{
+    Require(TorrentEngineService.ShouldRemoveCompletedTorrent(TorrentState.Seeding, 100));
+    Require(TorrentEngineService.ShouldRemoveCompletedTorrent(TorrentState.Downloading, 100));
+    Require(!TorrentEngineService.ShouldRemoveCompletedTorrent(TorrentState.Downloading, 99.99));
+    Require(!TorrentEngineService.ShouldRemoveCompletedTorrent(TorrentState.Hashing, 100));
+    Require(!TorrentEngineService.ShouldRemoveCompletedTorrent(TorrentState.Stopped, 100));
+    Require(!TorrentEngineService.ShouldRemoveCompletedTorrent(TorrentState.Error, 100));
+    Require(!TorrentEngineService.ShouldRemoveCompletedTorrent(TorrentState.Metadata, 100));
+});
 
 Check("ratio policy pauses completed torrents at the target", () =>
 {
@@ -185,6 +201,9 @@ Check("pause intents copy and normalize without aliasing", () =>
     Require(settings.PausedInfoHashes.Count == 1 && settings.PausedInfoHashes.Contains("ABCDEF"));
 });
 
+await CheckCompletedRemovalAsync(selectedOnly: true);
+await CheckCompletedRemovalAsync(selectedOnly: false);
+passed += 2;
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 
@@ -203,5 +222,82 @@ static void Require(bool condition)
     if (!condition)
     {
         throw new InvalidOperationException("Assertion failed.");
+    }
+}
+
+static async Task CheckCompletedRemovalAsync(bool selectedOnly)
+{
+    var root = Path.Combine(Path.GetTempPath(), "fast-torrent-completion-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        var data = new byte[16_384];
+        Array.Fill(data, (byte)42);
+        var hash = SHA1.HashData(data);
+        var torrent = new BEncodedDictionary
+        {
+            ["info"] = new BEncodedDictionary
+            {
+                ["name"] = new BEncodedString("completion-check"),
+                ["piece length"] = new BEncodedNumber(data.Length),
+                ["pieces"] = new BEncodedString(hash.Concat(hash).ToArray()),
+                ["files"] = new BEncodedList
+                {
+                    new BEncodedDictionary { ["length"] = new BEncodedNumber(data.Length), ["path"] = new BEncodedList { new BEncodedString("selected.bin") } },
+                    new BEncodedDictionary { ["length"] = new BEncodedNumber(data.Length), ["path"] = new BEncodedList { new BEncodedString("skipped.bin") } }
+                }
+            }
+        };
+        var source = Path.Combine(root, "check.torrent");
+        await File.WriteAllBytesAsync(source, torrent.Encode());
+        using var engine = new ClientEngine(new EngineSettingsBuilder
+        {
+            CacheDirectory = Path.Combine(root, "cache"),
+            DhtEndPoint = null,
+            ListenEndPoints = new Dictionary<string, IPEndPoint>(),
+            AllowLocalPeerDiscovery = false,
+            AllowPortForwarding = false
+        }.ToSettings());
+        var service = new TorrentEngineService(new AppPaths());
+        // Inject an isolated offline engine so the check never touches the user's saved queue.
+        typeof(TorrentEngineService).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(service, engine);
+        var preview = await service.PrepareAddAsync(source, root);
+        await service.CommitAddAsync(preview, selectedOnly ? ["selected.bin"] : ["selected.bin", "skipped.bin"], startImmediately: false);
+        Require((await service.GetSnapshotsAsync()).Count == 1);
+        var viewModel = new MainViewModel(service, new SettingsStore(new AppPaths()), new ReleaseUpdateService());
+        await viewModel.RefreshAsync();
+        Require(viewModel.Torrents.Count == 1 && viewModel.QueueSummary == "1 torrent");
+        viewModel.SelectedTorrent = viewModel.Torrents.Single();
+        var manager = engine.Torrents.Single();
+        var selected = manager.Files.Single(file => file.Path == "selected.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(selected.FullPath)!);
+        await File.WriteAllBytesAsync(selected.FullPath, data);
+        if (!selectedOnly)
+        {
+            await File.WriteAllBytesAsync(manager.Files.Single(file => file.Path == "skipped.bin").FullPath, data);
+        }
+        await manager.HashCheckAsync(autoStart: false);
+        Require(manager.PartialProgress == 100 && manager.Complete == !selectedOnly);
+        await service.StartAsync(preview.Id);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (manager.State is not (TorrentState.Downloading or TorrentState.Seeding))
+        {
+            await Task.Delay(50, timeout.Token);
+        }
+        await viewModel.RefreshAsync();
+        Require(viewModel.Torrents.Count == 0 && viewModel.SelectedTorrent is null && viewModel.QueueSummary == "0 torrents");
+        Require((await service.GetSnapshotsAsync()).Count == 0);
+        Require(engine.Torrents.Count == 0 && service.PausedInfoHashes.Count == 0);
+        Require((await File.ReadAllBytesAsync(selected.FullPath)).SequenceEqual(data));
+        Require(File.Exists(source));
+        var state = Path.Combine(root, "state.json");
+        await engine.SaveStateAsync(state);
+        using var restored = await ClientEngine.RestoreStateAsync(state);
+        Require(restored.Torrents.Count == 0);
+        Console.WriteLine($"PASS offline {(selectedOnly ? "selected-file" : "full")} completion clears queue and selection, keeps files and stays removed after restore");
+    }
+    finally
+    {
+        Directory.Delete(root, recursive: true);
     }
 }

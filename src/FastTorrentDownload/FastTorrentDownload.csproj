@@ -8,7 +8,7 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <AssemblyName>FastTorrentDownload</AssemblyName>
     <RootNamespace>FastTorrentDownload</RootNamespace>
-    <Version>0.1.1</Version>
+    <Version>0.3.7</Version>
     <Product>fast torrent download</Product>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <!-- Views use constructor injection and compiled XAML; they are never loaded through AvaloniaXamlLoader. -->

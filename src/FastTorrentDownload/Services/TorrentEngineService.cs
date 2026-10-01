@@ -428,13 +428,15 @@ public sealed class TorrentEngineService : IAsyncDisposable
         try
         {
             var engine = RequireEngine();
-            if (!_entries.Remove(id, out var entry))
+            if (!_entries.TryGetValue(id, out var entry))
             {
                 return;
             }
 
-            _pausedHashes.Remove(DescribeInfoHashes(entry.Manager.InfoHashes));
+            await entry.Manager.StopAsync();
             await engine.RemoveAsync(entry.Manager);
+            _entries.Remove(id);
+            _pausedHashes.Remove(DescribeInfoHashes(entry.Manager.InfoHashes));
         }
         finally
         {
@@ -470,6 +472,12 @@ public sealed class TorrentEngineService : IAsyncDisposable
         foreach (var pair in _entries.ToArray())
         {
             var manager = pair.Value.Manager;
+            if (ShouldRemoveCompletedTorrent(manager.State, manager.PartialProgress))
+            {
+                await RemoveAsync(pair.Key);
+                continue;
+            }
+
             var monitor = manager.Monitor;
             var downloaded = monitor.DataBytesReceived;
             var uploaded = monitor.DataBytesSent;
@@ -491,6 +499,9 @@ public sealed class TorrentEngineService : IAsyncDisposable
         await EnforceRatioPolicyAsync(snapshots);
         return snapshots;
     }
+
+    public static bool ShouldRemoveCompletedTorrent(TorrentState state, double partialProgress) =>
+        state is TorrentState.Downloading or TorrentState.Seeding && partialProgress >= 100;
 
     private static async Task<(int Seeders, int Leechers)> CountPeersAsync(TorrentManager manager)
     {
