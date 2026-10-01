@@ -6,3 +6,4 @@ publish/
 *.user
 .cursor/
 .tgrep/
+*.local
