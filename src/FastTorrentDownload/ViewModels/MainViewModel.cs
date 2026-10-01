@@ -217,7 +217,6 @@ public sealed partial class MainViewModel(
 
         try
         {
-            await _engine.EnforceRatioPolicyAsync();
             var snapshots = await _engine.GetSnapshotsAsync();
             var rowsById = Torrents.ToDictionary(row => row.Id);
             foreach (var snapshot in snapshots)

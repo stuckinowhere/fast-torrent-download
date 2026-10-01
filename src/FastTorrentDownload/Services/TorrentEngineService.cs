@@ -464,7 +464,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public async Task<IReadOnlyList<TorrentSnapshot>> GetSnapshotsAsync(bool includePeerCounts = true)
+    public async Task<IReadOnlyList<TorrentSnapshot>> GetSnapshotsAsync()
     {
         var snapshots = new List<TorrentSnapshot>(_entries.Count);
         foreach (var pair in _entries.ToArray())
@@ -473,7 +473,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             var monitor = manager.Monitor;
             var downloaded = monitor.DataBytesReceived;
             var uploaded = monitor.DataBytesSent;
-            var (seeders, leechers) = includePeerCounts ? await CountPeersAsync(manager) : (0, 0);
+            var (seeders, leechers) = await CountPeersAsync(manager);
             snapshots.Add(new TorrentSnapshot(
                 pair.Key,
                 string.IsNullOrWhiteSpace(manager.Name) ? "Fetching metadata…" : manager.Name,
@@ -487,6 +487,8 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 seeders,
                 leechers));
         }
+
+        await EnforceRatioPolicyAsync(snapshots);
         return snapshots;
     }
 
@@ -512,13 +514,22 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public async Task EnforceRatioPolicyAsync()
+    private async Task EnforceRatioPolicyAsync(IReadOnlyList<TorrentSnapshot> snapshots)
     {
-        foreach (var snapshot in (await GetSnapshotsAsync(includePeerCounts: false)).Where(snapshot => QueueCoordinator.ShouldPauseForRatio(snapshot, _settings)))
+        foreach (var snapshot in snapshots)
         {
-            await PauseAsync(snapshot.Id);
+            if (ShouldPauseForRatio(snapshot, _settings))
+            {
+                await PauseAsync(snapshot.Id);
+            }
         }
     }
+
+    public static bool ShouldPauseForRatio(TorrentSnapshot snapshot, AppSettings settings) =>
+        snapshot.Progress >= 100 &&
+        snapshot.State.Contains("Seeding", StringComparison.OrdinalIgnoreCase) &&
+        settings.SeedRatioTarget > 0 &&
+        snapshot.Ratio >= settings.SeedRatioTarget;
 
     public async ValueTask DisposeAsync()
     {
