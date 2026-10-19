@@ -75,6 +75,7 @@ internal static class UiSmoke
             await VerifySettingsLayoutAsync(settings, 360);
             settings.Close(null);
             await Task.Delay(100);
+            await VerifyAddDialogsAsync(main);
 
             viewModel.SelectedTorrent = viewModel.Torrents.Single(row => row.Name == "Completed example");
             Button("Resume").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
@@ -153,6 +154,84 @@ internal static class UiSmoke
                 "Settings validation and footer actions must remain visible outside the scroll area.");
         }
         Console.WriteLine($"PASS Settings scroll, final control, bandwidth fields and fixed validation/footer at 520x{height}");
+    }
+
+    private static async Task VerifyAddDialogsAsync(MainWindow main)
+    {
+        var destination = @"D:\Downloads\" + new string('d', 200);
+        var source = "magnet:?xt=urn:btih:" + new string('a', 40) + "&dn=" + new string('n', 300);
+        var add = new AddTorrentWindow(destination);
+        var requestTask = add.ShowDialog<AddTorrentRequest?>(main);
+        await Task.Delay(100);
+        add.FindControl<TextBox>("SourceTextBox")!.Text = source;
+        foreach (var width in new[] { 650, 520 })
+        {
+            add.Width = width;
+            await Task.Delay(100);
+            Require(Math.Abs(add.ClientSize.Width - width) < 2, $"Add dialog did not reach the requested width: {add.ClientSize}.");
+            foreach (var name in new[] { "SourceTextBox", "DestinationTextBox", "StartImmediatelyCheckBox" })
+                RequireInside(add.FindControl<Control>(name)!, add, name);
+            foreach (var button in add.GetVisualDescendants().OfType<Button>().Where(button => button.Content is string))
+                RequireInside(button, add, $"Add torrent: {button.Content}");
+        }
+        add.FindControl<CheckBox>("StartImmediatelyCheckBox")!.IsChecked = false;
+        add.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Add torrent"))
+            .RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        var request = await requestTask;
+        Require(request is { StartImmediately: false } && request.Source == source && request.Destination == destination,
+            "Adding must preserve the source, destination and start choice.");
+
+        var picker = new SelectTorrentFilesWindow(new string('t', 200));
+        var selectionTask = picker.ShowDialog<string[]?>(main);
+        await Task.Delay(100);
+        RequireInside(picker.FindControl<StackPanel>("LoadingPanel")!, picker, "File-list loading state");
+        var files = Enumerable.Range(0, 100).Select(index => new TorrentFilePreview($"folder/{new string('f', 180)}-{index}.bin", 1_234_567_890)).ToArray();
+        picker.ShowPreview(new TorrentAddPreview("layout-check", new string('t', 200), files));
+        picker.Width = 560;
+        picker.Height = 420;
+        await Task.Delay(150);
+        Require(Math.Abs(picker.ClientSize.Width - 560) < 2 && Math.Abs(picker.ClientSize.Height - 420) < 2,
+            $"File selection did not reach its minimum size: {picker.ClientSize}.");
+        foreach (var button in picker.GetVisualDescendants().OfType<Button>().Where(button => button.Content is string))
+            RequireInside(button, picker, $"File selection: {button.Content}");
+        picker.FindControl<Button>("SelectNoneButton")!.RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Require(picker.Files.All(file => !file.IsSelected), "Select none must clear the selection.");
+        picker.FindControl<Button>("AddSelectedButton")!.RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        await Task.Delay(100);
+        Require(!selectionTask.IsCompleted, "An empty selection must keep the dialog open.");
+        RequireInside(picker.FindControl<TextBlock>("StatusTextBlock")!, picker, "File-selection validation");
+        foreach (var button in picker.GetVisualDescendants().OfType<Button>().Where(button => button.Content is string))
+            RequireInside(button, picker, $"File selection with validation: {button.Content}");
+        picker.FindControl<Button>("SelectAllButton")!.RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Require(picker.Files.All(file => file.IsSelected), "Select all must restore the selection.");
+        var list = picker.FindControl<ListBox>("FilesListBox")!;
+        list.ScrollIntoView(picker.Files[^1]);
+        await Task.Delay(150);
+        var lastRow = list.GetVisualDescendants().OfType<CheckBox>().Single(box => ReferenceEquals(box.DataContext, picker.Files[^1]));
+        RequireInside(lastRow, picker, "Last file after scrolling");
+        var lastPoint = lastRow.TranslatePoint(default, list);
+        Require(lastPoint is { } lastPosition && lastPosition.Y >= 0 && lastPosition.Y + lastRow.Bounds.Height <= list.Bounds.Height + 1,
+            "Scrolling must reveal the entire final file row inside the list.");
+        foreach (var text in lastRow.GetVisualDescendants().OfType<TextBlock>())
+        {
+            var point = text.TranslatePoint(default, list);
+            Require(point is { } position && position.X >= 0 && position.X + text.Bounds.Width <= list.Bounds.Width + 1,
+                "Long file names must leave their size and checkbox visible.");
+        }
+        foreach (var file in picker.Files.Skip(1)) file.IsSelected = false;
+        picker.FindControl<Button>("AddSelectedButton")!.RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Require((await selectionTask)!.SequenceEqual(new[] { files[0].Path }), "Only the selected file must be returned.");
+        Console.WriteLine("PASS Add dialog at widths 650/520, file selection at 560x420, loading/validation, long names and 100-file scrolling");
+    }
+
+    private static void RequireInside(Control control, Window window, string label)
+    {
+        var point = control.TranslatePoint(default, window);
+        Require(control.IsVisible && control.Bounds.Width > 0 && control.Bounds.Height > 0 &&
+            point is { } position && position.X >= 0 && position.Y >= 0 &&
+            position.X + control.Bounds.Width <= window.ClientSize.Width + 1 &&
+            position.Y + control.Bounds.Height <= window.ClientSize.Height + 1,
+            $"{label} is clipped or inaccessible at {window.ClientSize}.");
     }
 
     private static async Task<AppPaths> PrepareAsync()
