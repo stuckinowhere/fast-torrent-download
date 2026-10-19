@@ -66,7 +66,13 @@ internal static class UiSmoke
             Button("Settings").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
             await Task.Delay(150);
             var settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
+            Require(!settings.CanResize && settings.WindowState == WindowState.Normal,
+                "Settings must disable native resizing and maximization.");
+            Require(Math.Abs(settings.Width - main.Width) < 1 && Math.Abs(settings.Height - main.Height) < 1,
+                "Settings must open at the same default size as the app.");
             Require(settings.FindControl<TextBox>("SeedRatioTextBox") is null && settings.FindControl<TextBox>("DownloadLimitTextBox") is not null, "Completion settings are inconsistent.");
+            await VerifySettingsLayoutAsync(settings, 440);
+            await VerifySettingsLayoutAsync(settings, 360);
             settings.Close(null);
             await Task.Delay(100);
 
@@ -106,6 +112,47 @@ internal static class UiSmoke
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static async Task VerifySettingsLayoutAsync(SettingsWindow settings, double height)
+    {
+        settings.SizeToContent = SizeToContent.Manual;
+        settings.Width = 520;
+        settings.Height = height;
+        await Task.Delay(150);
+        var scroll = ((Grid)settings.Content!).Children.OfType<ScrollViewer>().Single();
+        Require(scroll.Extent.Height > scroll.Viewport.Height && scroll.Viewport.Height > 0,
+            "Settings must have a bounded, scrollable viewport in a small window.");
+        scroll.ScrollToEnd();
+        await Task.Delay(100);
+        var theme = settings.FindControl<ComboBox>("ThemeComboBox")!;
+        var themePoint = theme.TranslatePoint(default, scroll);
+        Require(scroll.Offset.Y > 0 && themePoint is { } location && location.Y >= 0 &&
+            location.Y + theme.Bounds.Height <= scroll.Bounds.Height,
+            "Scrolling Settings must reveal the final appearance control.");
+        foreach (var name in new[] { "DownloadLimitTextBox", "UploadLimitTextBox" })
+        {
+            var control = settings.FindControl<TextBox>(name)!;
+            var point = control.TranslatePoint(default, scroll);
+            Require(point is { } position && position.X >= 0 &&
+                position.X + control.Bounds.Width <= scroll.Viewport.Width,
+                "Bandwidth fields must fit at the minimum Settings width.");
+        }
+
+        var save = settings.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Save settings"));
+        settings.FindControl<TextBox>("ListenPortTextBox")!.Text = "0";
+        save.RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        await Task.Delay(100);
+        var error = settings.FindControl<TextBlock>("ValidationErrorTextBlock")!;
+        Require(error.IsVisible && !string.IsNullOrEmpty(error.Text), "Invalid settings must show validation feedback.");
+        foreach (var control in new Control[] { error, save, settings.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Cancel")) })
+        {
+            var point = control.TranslatePoint(default, settings);
+            Require(point is { } position && position.Y >= 0 &&
+                position.Y + control.Bounds.Height <= settings.ClientSize.Height,
+                "Settings validation and footer actions must remain visible outside the scroll area.");
+        }
+        Console.WriteLine($"PASS Settings scroll, final control, bandwidth fields and fixed validation/footer at 520x{height}");
     }
 
     private static async Task<AppPaths> PrepareAsync()

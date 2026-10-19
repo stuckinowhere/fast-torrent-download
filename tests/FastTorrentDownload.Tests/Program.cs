@@ -357,7 +357,20 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
                     showedStopping = true;
                 }
             };
-            await viewModel.RemoveSelectedAsync();
+            var refreshGate = (SemaphoreSlim)typeof(MainViewModel)
+                .GetField("_refreshGate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(viewModel)!;
+            await refreshGate.WaitAsync();
+            Task removal;
+            try
+            {
+                removal = viewModel.RemoveSelectedAsync();
+                using var removalTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                while (engine.Torrents.Contains(manager)) await Task.Delay(25, removalTimeout.Token);
+                await Task.Delay(100);
+                Require(!removal.IsCompleted); // Finishing removal must wait for an in-flight queue refresh.
+            }
+            finally { refreshGate.Release(); }
+            await removal.WaitAsync(TimeSpan.FromSeconds(10));
             Require(showedStopping);
             Require(viewModel.StatusMessage == "Removed completion-check; downloaded files were kept.");
             await viewModel.RemoveSelectedAsync();
