@@ -132,7 +132,7 @@ public sealed partial class MainViewModel(
         {
             await action();
             await SyncPauseIntentsAsync();
-            await RefreshAsync();
+            await RefreshAsync(waitForPending: true);
             StatusMessage = success;
             ShowNotification(success, operation == "Stopping…" && !Torrents.Contains(row) ? row.Destination : null);
         }
@@ -250,9 +250,14 @@ public sealed partial class MainViewModel(
         StatusMessage = $"{theme} theme enabled.";
     }
 
-    public async Task RefreshAsync()
+    public async Task RefreshAsync(bool waitForPending = false)
     {
-        if (!await _refreshGate.WaitAsync(0))
+        if (waitForPending)
+        {
+            // Actions need a fresh snapshot after any older refresh has finished.
+            await _refreshGate.WaitAsync();
+        }
+        else if (!await _refreshGate.WaitAsync(0))
         {
             return;
         }
