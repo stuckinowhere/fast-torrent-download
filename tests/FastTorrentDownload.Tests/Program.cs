@@ -8,6 +8,10 @@ using MonoTorrent;
 using MonoTorrent.BEncoding;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Net.Sockets;
+using System.Diagnostics;
+
+if (args.Contains("--ui-smoke") || args.Contains("--ui-smoke-auto")) return UiSmoke.Run(args.Contains("--ui-smoke-auto"));
 
 var passed = 0;
 
@@ -22,30 +26,50 @@ Check("completed selected files are removed only in a verified download state", 
     Require(!TorrentEngineService.ShouldRemoveCompletedTorrent(TorrentState.Metadata, 100));
 });
 
-Check("ratio policy pauses completed torrents at the target", () =>
+Check("binary rate formatting preserves fractional units", () =>
 {
-    var settings = new AppSettings { SeedRatioTarget = 1.0 };
-    var completed = Snapshot(progress: 100, downloaded: 1_000, uploaded: 1_000);
-    Require(TorrentEngineService.ShouldPauseForRatio(completed, settings));
+    Require(TransferFormatting.Rate(1536) == $"{1.5:0.0} KiB/s");
+    Require(TransferFormatting.Bytes(-1) == "0 B");
+    Require(TransferFormatting.Bytes(1_572_864) == $"{1.5:0.0} MiB");
 });
 
-Check("ratio policy keeps incomplete or below-target torrents active", () =>
+Check("ETA is based on selected bytes and stays unknown without useful speed", () =>
 {
-    var settings = new AppSettings { SeedRatioTarget = 1.0 };
-    Require(!TorrentEngineService.ShouldPauseForRatio(Snapshot(progress: 99.9, downloaded: 1_000, uploaded: 2_000), settings));
-    Require(!TorrentEngineService.ShouldPauseForRatio(Snapshot(progress: 100, downloaded: 1_000, uploaded: 999), settings));
+    Require(TransferFormatting.Remaining(1024, 2048, 512, "Downloading") == "ETA 0m 2s");
+    Require(TransferFormatting.Remaining(1024, 2048, 0, "Downloading") == "ETA unknown");
+    Require(TransferFormatting.Remaining(1024, 2048, 512, "Stopped") == "ETA unknown");
+    Require(TransferFormatting.Remaining(2048, 2048, 0, "Stopped") == "Complete");
 });
 
-Check("zero ratio target leaves seeding under user control", () =>
+Check("legacy ratio settings load without overriding automatic completion", () =>
 {
-    var settings = new AppSettings { SeedRatioTarget = 0 };
-    Require(!TorrentEngineService.ShouldPauseForRatio(Snapshot(progress: 100, downloaded: 1_000, uploaded: 10_000), settings));
+    var settings = System.Text.Json.JsonSerializer.Deserialize<AppSettings>("{\"SeedRatioTarget\":0,\"ListenPort\":51413}");
+    Require(settings?.ListenPort == 51413);
+    Require(TorrentEngineService.ShouldRemoveCompletedTorrent(TorrentState.Seeding, 100));
 });
 
-Check("a stopped completed torrent is not stopped again by ratio enforcement", () =>
+Check("row operation disables actions and reports stopping without losing progress", () =>
 {
-    var settings = new AppSettings { SeedRatioTarget = 1.0 };
-    Require(!TorrentEngineService.ShouldPauseForRatio(Snapshot(progress: 100, downloaded: 1_000, uploaded: 2_000, state: "Stopped"), settings));
+    var row = new TorrentRowViewModel(Snapshot(50, 5, 0) with { SelectedBytes = 2048, VerifiedBytes = 1024 });
+    row.Operation = "Stopping…";
+    Require(row.IsBusy && !row.CanAct && row.StateLabel == "Stopping…" && row.Progress == 50);
+    row.Operation = null;
+    Require(row.CanAct && row.DetailLabel.Contains($"{1.0:0.0} KiB / {2.0:0.0} KiB verified"));
+});
+
+Check("diagnostics distinguish missing peers, idle peers, limits and unavailable statistics", () =>
+{
+    var data = new TorrentDiagnostics(0, 0, 0, 0, 50, "Ready", 20, 0, 0,
+        [new TrackerDiagnostic("http://tracker.test", "Offline", "Timed out")]);
+    Require(data.Diagnosis(0).StartsWith("No known peers"));
+    Require((data with { KnownPeers = 10 }).Diagnosis(0).Contains("none are connected"));
+    Require((data with { ConnectedPeers = 2 }).Diagnosis(0).Contains("none are currently sending"));
+    Require((data with { ConnectedPeers = 2, ReceivingPeers = 1, DownloadLimit = 1000 }).Diagnosis(950).Contains("configured limit"));
+    Require((data with { PeerError = "unavailable" }).Describe(0).Contains("Peer statistics unavailable"));
+    Require(data.Describe(0).Contains("tracker.test · Offline · Timed out"));
+    Require(TorrentEngineService.EffectiveLimit(0, 512) == 512);
+    Require(TorrentEngineService.EffectiveLimit(1000, 512) == 512);
+    Require(TorrentEngineService.EffectiveLimit(1000, 0) == 1000);
 });
 
 Check("listener binding accepts IPv4 and rejects ambiguous inputs", () =>
@@ -142,9 +166,9 @@ Check("engine tuning stays above library defaults for faster swarms", () =>
 Check("row detail shows seeder and peer counts", () =>
 {
     var row = new TorrentRowViewModel(Snapshot(progress: 42, downloaded: 1_000, uploaded: 500, seeders: 5, leechers: 23));
-    Require(row.DetailLabel.Contains("5 seeders") && row.DetailLabel.Contains("23 peers"));
+    Require(row.DetailLabel.Contains("5 connected seeders") && row.DetailLabel.Contains("23 other peers"));
     row.Update(Snapshot(progress: 43, downloaded: 2_000, uploaded: 500, seeders: 6, leechers: 20));
-    Require(row.DetailLabel.Contains("6 seeders") && row.DetailLabel.Contains("20 peers"));
+    Require(row.DetailLabel.Contains("6 connected seeders") && row.DetailLabel.Contains("20 other peers"));
 });
 
 Check("show folder falls back to the default download folder when nothing is selected", () =>
@@ -201,10 +225,15 @@ Check("pause intents copy and normalize without aliasing", () =>
     Require(settings.PausedInfoHashes.Count == 1 && settings.PausedInfoHashes.Contains("ABCDEF"));
 });
 
+await CheckRestoredDestinationAsync();
+passed++;
 await CheckCompletedRemovalAsync(selectedOnly: true);
 await CheckCompletedRemovalAsync(selectedOnly: false);
 await CheckCompletedRemovalAsync(selectedOnly: true, manualRemoval: true);
 passed += 3;
+await LiveTransferCheck.RunAsync(complete: false);
+await LiveTransferCheck.RunAsync(complete: true);
+passed += 2;
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 
@@ -271,7 +300,14 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
         await File.WriteAllBytesAsync(survivorSource, torrent.Encode());
         var survivor = await service.PrepareAddAsync(survivorSource, root);
         await service.CommitAddAsync(survivor, ["selected.bin"], startImmediately: false);
-        await engine.SaveStateAsync(paths.EngineStateFile);
+        var savedEntries = (BEncodedList)BEncodedValue.Decode<BEncodedDictionary>(await File.ReadAllBytesAsync(paths.EngineStateFile))["Torrents"];
+        Require(savedEntries.Count == 2);
+        var added = savedEntries.Cast<BEncodedDictionary>().Single(item => ((BEncodedList)item["Files"]).Cast<BEncodedDictionary>().Any(file => ((BEncodedString)file["FullPath"]).Text.Contains("completion-check")));
+        Require(((BEncodedString)added["SavePath"]).Text == managerSavePath());
+        var addedFiles = ((BEncodedList)added["Files"]).Cast<BEncodedDictionary>().ToArray();
+        Require(((BEncodedString)addedFiles.Single(file => ((BEncodedString)file["Path"]).Text == "selected.bin")["Priority"]).Text == "Normal");
+        Require(((BEncodedString)addedFiles.Single(file => ((BEncodedString)file["Path"]).Text == "skipped.bin")["Priority"]).Text == (selectedOnly ? "DoNotDownload" : "Normal"));
+        string managerSavePath() => engine.Torrents.Single(item => item.Name == "completion-check").SavePath;
         // An unconfirmed add must not enter the saved queue when another torrent is removed.
         ((BEncodedDictionary)torrent["info"])["name"] = new BEncodedString("pending-check");
         var pendingSource = Path.Combine(root, "pending.torrent");
@@ -292,6 +328,25 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
         }
         if (manualRemoval)
         {
+            var backup = paths.EngineStateFile + ".backup";
+            File.Move(paths.EngineStateFile, backup);
+            Directory.CreateDirectory(paths.EngineStateFile);
+            try
+            {
+                await viewModel.RemoveSelectedAsync();
+                throw new InvalidOperationException("Expected a blocked state file to prevent removal.");
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                viewModel.StatusMessage = exception.Message; // MainWindow.RunActionAsync shows this error in the app.
+                Require(engine.Torrents.Contains(manager) && !viewModel.SelectedTorrent!.IsBusy);
+                Require((await service.GetSnapshotsAsync()).Count == 2);
+            }
+            finally
+            {
+                Directory.Delete(paths.EngineStateFile);
+                File.Move(backup, paths.EngineStateFile);
+            }
             var showedStopping = false;
             viewModel.PropertyChanged += (_, args) =>
             {
@@ -312,14 +367,27 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
         {
             await manager.HashCheckAsync(autoStart: false);
             Require(manager.PartialProgress == 100 && manager.Complete == !selectedOnly);
+            var selection = (await service.GetSnapshotsAsync()).Single(item => item.Id == preview.Id);
+            Require(selection.SelectedBytes == data.Length * (selectedOnly ? 1 : 2));
+            Require(selection.VerifiedBytes == selection.SelectedBytes && selection.Progress == 100);
             await service.StartAsync(preview.Id);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             while (manager.State is not (TorrentState.Downloading or TorrentState.Seeding))
             {
-                await Task.Delay(50, timeout.Token);
+                if (manager.State == TorrentState.Error) throw new InvalidOperationException($"Test engine error: {manager.Error?.Reason}: {manager.Error?.Exception}");
+                if (timeout.IsCancellationRequested) throw new InvalidOperationException($"Start did not settle: state={manager.State}, hashChecked={manager.HashChecked}, progress={manager.PartialProgress}");
+                await Task.Delay(50);
             }
         }
         await viewModel.RefreshAsync();
+        using (var removalTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        {
+            while (viewModel.Torrents.Count != 1)
+            {
+                await Task.Delay(50, removalTimeout.Token);
+                await viewModel.RefreshAsync();
+            }
+        }
         Require(viewModel.Torrents.Count == 1 && viewModel.SelectedTorrent is null && viewModel.QueueSummary == "1 torrent");
         Require((await service.GetSnapshotsAsync()).Single().Id == survivor.Id);
         Require(engine.Torrents.Count == 2 && service.PausedInfoHashes.Count == 1);
@@ -330,6 +398,16 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
         Require(((BEncodedList)persisted["Torrents"]).Count == 1);
         using var restored = await ClientEngine.RestoreStateAsync(paths.EngineStateFile);
         Require(restored.Torrents.Single().Name == "survivor-check");
+        if (!manualRemoval)
+        {
+            Require(viewModel.Notification?.Message.StartsWith("Completed completion-check") == true);
+            Require(viewModel.Notification?.Destination == root);
+            Require(viewModel.Activity.Any(item => item.CanOpenFolder && item.Message.StartsWith("Completed completion-check")));
+            viewModel.ExpireNotification(DateTimeOffset.UtcNow.AddMinutes(1));
+            Require(!viewModel.HasNotification && viewModel.StatusMessage == "Ready.");
+        }
+        for (var i = 0; i < 55; i++) viewModel.StatusMessage = $"Activity check {i}";
+        Require(viewModel.Activity.Count == 50 && viewModel.Activity[0].Message == "Activity check 54");
         await service.CancelAddAsync(pending.Id);
         Console.WriteLine($"PASS offline {(manualRemoval ? "manual removal" : selectedOnly ? "selected-file completion" : "full completion")} persists immediately, keeps files and excludes pending adds after restore");
     }
@@ -337,4 +415,57 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
     {
         Directory.Delete(root, recursive: true);
     }
+}
+
+static async Task CheckRestoredDestinationAsync()
+{
+    var root = Path.Combine(Path.GetTempPath(), "fast-torrent-restore-" + Guid.NewGuid().ToString("N"));
+    var paths = new AppPaths(root);
+    paths.EnsureDirectories();
+    try
+    {
+        var source = Path.Combine(root, "restore.torrent");
+        var torrent = new BEncodedDictionary
+        {
+            ["info"] = new BEncodedDictionary
+            {
+                ["name"] = new BEncodedString("restore-check"), ["length"] = new BEncodedNumber(1),
+                ["piece length"] = new BEncodedNumber(16_384), ["pieces"] = new BEncodedString(SHA1.HashData(new byte[1]))
+            }
+        };
+        await File.WriteAllBytesAsync(source, torrent.Encode());
+        using (var engine = new ClientEngine(new EngineSettingsBuilder
+        {
+            CacheDirectory = paths.CacheDirectory, DhtEndPoint = null, AllowPortForwarding = false,
+            AllowLocalPeerDiscovery = false, ListenEndPoints = new Dictionary<string, IPEndPoint>()
+        }.ToSettings()))
+        {
+            var service = new TorrentEngineService(paths);
+            typeof(TorrentEngineService).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(service, engine);
+            var preview = await service.PrepareAddAsync(source, root);
+            Directory.CreateDirectory(paths.EngineStateFile);
+            try
+            {
+                await service.CommitAddAsync(preview, ["restore-check"], startImmediately: false);
+                throw new InvalidOperationException("Expected a blocked state path to reject the add.");
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                Require((await service.GetSnapshotsAsync()).Count == 0);
+            }
+            finally { Directory.Delete(paths.EngineStateFile); }
+            await service.CommitAddAsync(preview, ["restore-check"], startImmediately: false);
+        }
+        using var port = new TcpListener(IPAddress.Loopback, 0);
+        port.Start();
+        var listenPort = ((IPEndPoint)port.LocalEndpoint).Port;
+        port.Stop();
+        await using var reopened = new TorrentEngineService(paths);
+        await reopened.InitializeAsync(new AppSettings { ListenPort = listenPort, EnableDht = false, EnablePeerExchange = false, EnableLocalPeerDiscovery = false, EnablePortForwarding = false });
+        var reloaded = (await reopened.GetSnapshotsAsync()).Single();
+        Require(reloaded.Destination == root && reloaded.State == "Stopped");
+        Require(MainViewModel.ResolveFolderToOpen(new TorrentRowViewModel(reloaded), new AppSettings()) == root);
+        Console.WriteLine("PASS an added torrent survives restart without shutdown, preserving pause intent and destination");
+    }
+    finally { Directory.Delete(root, recursive: true); }
 }

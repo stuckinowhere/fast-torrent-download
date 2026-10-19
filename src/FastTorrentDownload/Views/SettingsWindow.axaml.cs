@@ -24,7 +24,6 @@ public partial class SettingsWindow : Window
         EncryptionCheckBox.IsChecked = _settings.RequireEncryptedPeerConnections;
         DownloadLimitTextBox.Text = _settings.MaximumDownloadKiBPerSecond.ToString(CultureInfo.InvariantCulture);
         UploadLimitTextBox.Text = _settings.MaximumUploadKiBPerSecond.ToString(CultureInfo.InvariantCulture);
-        SeedRatioTextBox.Text = _settings.SeedRatioTarget.ToString(CultureInfo.InvariantCulture);
         ThemeComboBox.SelectedIndex = _settings.Theme switch { "Light" => 1, "Dark" => 2, _ => 0 };
     }
 
@@ -62,8 +61,7 @@ public partial class SettingsWindow : Window
         }
 
         if (!int.TryParse(DownloadLimitTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var downloadLimit) || downloadLimit < 0 ||
-            !int.TryParse(UploadLimitTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var uploadLimit) || uploadLimit < 0 ||
-            !double.TryParse(SeedRatioTextBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var ratio) || ratio < 0)
+            !int.TryParse(UploadLimitTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var uploadLimit) || uploadLimit < 0)
         {
             ShowValidationError("Use non-negative numeric limits.");
             return;
@@ -79,7 +77,6 @@ public partial class SettingsWindow : Window
         _settings.RequireEncryptedPeerConnections = EncryptionCheckBox.IsChecked == true;
         _settings.MaximumDownloadKiBPerSecond = downloadLimit;
         _settings.MaximumUploadKiBPerSecond = uploadLimit;
-        _settings.SeedRatioTarget = ratio;
         _settings.Theme = ThemeComboBox.SelectedIndex switch { 1 => "Light", 2 => "Dark", _ => "System" };
         _settings.Normalize();
         Close(_settings);

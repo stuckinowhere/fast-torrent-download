@@ -14,7 +14,6 @@ public sealed class AppSettings
     public bool RequireEncryptedPeerConnections { get; set; }
     public int MaximumDownloadKiBPerSecond { get; set; }
     public int MaximumUploadKiBPerSecond { get; set; }
-    public double SeedRatioTarget { get; set; } = 1.0;
     public string Theme { get; set; } = "System";
     public bool ConfirmCloseBeforeExit { get; set; } = true;
     public HashSet<string> PausedInfoHashes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -37,7 +36,6 @@ public sealed class AppSettings
         ListenAddress = string.IsNullOrWhiteSpace(ListenAddress) ? "0.0.0.0" : ListenAddress.Trim();
         MaximumDownloadKiBPerSecond = Math.Max(0, MaximumDownloadKiBPerSecond);
         MaximumUploadKiBPerSecond = Math.Max(0, MaximumUploadKiBPerSecond);
-        SeedRatioTarget = Math.Max(0, SeedRatioTarget);
         Theme = Theme is "Light" or "Dark" or "System" ? Theme : "System";
         PausedInfoHashes = new HashSet<string>(
             PausedInfoHashes.Where(hash => !string.IsNullOrWhiteSpace(hash)),

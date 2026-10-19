@@ -11,7 +11,7 @@ public sealed partial class TorrentFileSelectionItem : ObservableObject
     public TorrentFileSelectionItem(TorrentFilePreview file)
     {
         Path = file.Path;
-        SizeLabel = FormatSize(file.Length);
+        SizeLabel = Services.TransferFormatting.Bytes(file.Length);
     }
 
     public string Path { get; }
@@ -19,19 +19,6 @@ public sealed partial class TorrentFileSelectionItem : ObservableObject
     [ObservableProperty]
     private bool _isSelected = true;
 
-    private static string FormatSize(long bytes)
-    {
-        string[] units = ["B", "KiB", "MiB", "GiB", "TiB"];
-        var value = (double)Math.Max(0, bytes);
-        var unit = 0;
-        while (value >= 1024 && unit < units.Length - 1)
-        {
-            value /= 1024;
-            unit++;
-        }
-
-        return unit == 0 ? $"{value:0} {units[unit]}" : $"{value:0.##} {units[unit]}";
-    }
 }
 
 public partial class SelectTorrentFilesWindow : Window
