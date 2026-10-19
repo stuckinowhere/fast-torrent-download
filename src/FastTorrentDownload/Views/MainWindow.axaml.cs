@@ -151,8 +151,14 @@ public partial class MainWindow : Window
         }
 
         var items = _viewModel.Torrents
+            .Where(row => !row.IsBusy)
             .Select(row => new PausableTorrentItem(row.Id, row.Name, row.State))
             .ToArray();
+        if (items.Length == 0)
+        {
+            _viewModel.StatusMessage = "Wait for the current torrent operations to finish.";
+            return;
+        }
         var id = await new PauseTorrentWindow(items, _viewModel.SelectedTorrent?.Id) { Icon = Icon }.ShowDialog<string?>(this);
         if (id is null)
         {
@@ -164,6 +170,9 @@ public partial class MainWindow : Window
     private async void Recheck_Click(object? sender, RoutedEventArgs eventArgs) => await RunActionAsync(_viewModel.RecheckSelectedAsync);
 
     private void Folder_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.OpenSelectedFolder();
+    private void NotificationFolder_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.OpenNotificationFolder();
+    private async void Activity_Click(object? sender, RoutedEventArgs eventArgs) =>
+        await new ActivityWindow(_viewModel.Activity) { Icon = Icon }.ShowDialog(this);
 
     private async void Remove_Click(object? sender, RoutedEventArgs eventArgs) => await RunActionAsync(_viewModel.RemoveSelectedAsync);
 
@@ -221,6 +230,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            Services.AppLogger.LogException("Torrent action failed", exception);
             _viewModel.StatusMessage = exception.Message;
         }
     }

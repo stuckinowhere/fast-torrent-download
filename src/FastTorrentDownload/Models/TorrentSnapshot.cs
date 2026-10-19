@@ -11,7 +11,11 @@ public sealed record TorrentSnapshot(
     long DownloadedBytes,
     long UploadedBytes,
     int SeederCount,
-    int LeecherCount)
+    int LeecherCount,
+    string? Operation = null,
+    long SelectedBytes = 0,
+    long VerifiedBytes = 0,
+    TorrentDiagnostics? Diagnostics = null)
 {
     public double Ratio => DownloadedBytes == 0 ? 0 : (double)UploadedBytes / DownloadedBytes;
 }

@@ -39,16 +39,14 @@
         </StackPanel>
 
         <StackPanel Spacing="7">
-          <TextBlock Text="Bandwidth and seeding" FontWeight="Bold" FontSize="18" />
-          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="8">
+          <TextBlock Text="Bandwidth and completion" FontWeight="Bold" FontSize="18" />
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="8">
             <TextBlock Text="Download limit (KiB/s, 0 = unlimited)" VerticalAlignment="Center" />
             <TextBox x:Name="DownloadLimitTextBox" Grid.Column="1" Width="150" HorizontalAlignment="Left" />
             <TextBlock Grid.Row="1" Text="Upload limit (KiB/s, 0 = unlimited)" VerticalAlignment="Center" />
             <TextBox x:Name="UploadLimitTextBox" Grid.Row="1" Grid.Column="1" Width="150" HorizontalAlignment="Left" />
-            <TextBlock Grid.Row="2" Text="Pause when ratio reaches" VerticalAlignment="Center" />
-            <TextBox x:Name="SeedRatioTextBox" Grid.Row="2" Grid.Column="1" Width="150" HorizontalAlignment="Left" />
           </Grid>
-          <TextBlock Text="Set ratio to 0 to keep seeding until you pause it yourself." Opacity="0.68" TextWrapping="Wrap" />
+          <TextBlock Text="Completed downloads leave the queue automatically. Downloaded files are kept, and the completion notification lets you open their folder." Opacity="0.68" TextWrapping="Wrap" />
         </StackPanel>
 
         <StackPanel Spacing="7">

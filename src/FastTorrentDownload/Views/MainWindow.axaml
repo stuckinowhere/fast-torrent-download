@@ -10,7 +10,7 @@
         DragDrop.AllowDrop="True" DragDrop.Drop="Drop_Handle"
         Background="{DynamicResource WindowBackgroundBrush}">
 
-  <Grid RowDefinitions="Auto,*,Auto,Auto">
+  <Grid RowDefinitions="Auto,*,Auto,Auto,Auto">
     <Border Grid.Row="0" Background="{DynamicResource HeaderBackgroundBrush}" Padding="28,20">
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Orientation="Horizontal" Spacing="14">
@@ -44,11 +44,11 @@
           <TextBlock Text="{Binding TotalUploadRate}" FontFamily="Consolas" VerticalAlignment="Center" />
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-          <Button Content="Resume" Click="Resume_Click" />
-          <Button Content="Pause" Click="Pause_Click" />
-          <Button Content="Recheck" Click="Recheck_Click" />
+          <Button Content="Resume" Click="Resume_Click" IsEnabled="{Binding SelectedTorrent.CanAct, FallbackValue=False, TargetNullValue=False}" />
+          <Button Content="Pause" Click="Pause_Click" IsEnabled="{Binding HasTorrents}" />
+          <Button Content="Recheck" Click="Recheck_Click" IsEnabled="{Binding SelectedTorrent.CanAct, FallbackValue=False, TargetNullValue=False}" />
           <Button Content="Show folder" Click="Folder_Click" />
-          <Button Content="Remove" Click="Remove_Click" />
+          <Button Content="Remove" Click="Remove_Click" IsEnabled="{Binding SelectedTorrent.CanAct, FallbackValue=False, TargetNullValue=False}" />
         </StackPanel>
       </Grid>
 
@@ -57,16 +57,22 @@
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="vm:TorrentRowViewModel">
             <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="1" Padding="18">
-              <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="9">
+              <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="9">
                 <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="16" TextTrimming="CharacterEllipsis" />
-                <TextBlock Grid.Column="1" Text="{Binding State}" FontFamily="Consolas" Opacity="0.75" />
+                <TextBlock Grid.Column="1" Text="{Binding StateLabel}" FontFamily="Consolas" Opacity="0.75" />
                 <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding Progress}" Height="8" />
-                <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="16">
+                <Grid Grid.Row="2" Grid.ColumnSpan="2" ColumnDefinitions="Auto,*" ColumnSpacing="16">
                   <TextBlock Text="{Binding ProgressLabel}" FontFamily="Consolas" FontWeight="SemiBold" />
-                  <TextBlock Grid.Column="1" Text="{Binding TransferLabel}" FontFamily="Consolas" />
-                  <TextBlock Grid.Column="2" Text="{Binding DetailLabel}" Opacity="0.72" TextTrimming="CharacterEllipsis" />
-                  <TextBlock Grid.Column="3" Text="{Binding Destination}" Opacity="0.55" TextTrimming="CharacterEllipsis" MaxWidth="240" />
+                  <TextBlock Grid.Column="1" Text="{Binding TransferLabel}" FontFamily="Consolas" HorizontalAlignment="Right" />
                 </Grid>
+                <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Text="{Binding DetailLabel}" Opacity="0.8" TextWrapping="Wrap" />
+                <Expander Grid.Row="4" Grid.ColumnSpan="2" Header="Details and speed diagnostics" HorizontalAlignment="Stretch">
+                  <StackPanel Spacing="8" Margin="0,8,0,0">
+                    <SelectableTextBlock Text="{Binding Destination}" TextWrapping="Wrap" />
+                    <SelectableTextBlock Text="{Binding SessionLabel}" TextWrapping="Wrap" />
+                    <SelectableTextBlock Text="{Binding DiagnosticsText}" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Expander>
               </Grid>
             </Border>
           </DataTemplate>
@@ -74,11 +80,21 @@
       </ListBox>
     </Grid>
 
-    <Border Grid.Row="2" BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="0,1,0,0" Padding="28,12">
-      <TextBlock Text="{Binding StatusMessage}" TextTrimming="CharacterEllipsis" Opacity="0.8" />
+    <Border Grid.Row="2" IsVisible="{Binding HasNotification}" BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="0,1,0,0" Padding="28,12">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <TextBlock Text="{Binding Notification.Message}" TextWrapping="Wrap" VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="Open folder" Click="NotificationFolder_Click" IsVisible="{Binding CanOpenNotificationFolder}" />
+      </Grid>
     </Border>
 
-    <Border Grid.Row="3" Padding="28,2,28,10">
+    <Border Grid.Row="3" BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="0,1,0,0" Padding="28,8">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <TextBlock Text="{Binding StatusMessage}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding StatusMessage}" Opacity="0.8" VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="Activity" Click="Activity_Click" />
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="4" Padding="28,2,28,10">
       <Grid ColumnDefinitions="*,Auto">
         <TextBlock Text="© 2026 stuckinowhere" HorizontalAlignment="Left" FontSize="12" Opacity="0.6" VerticalAlignment="Center" />
         <TextBlock Grid.Column="1" Text="{Binding AppVersionLabel}" FontSize="12" Opacity="0.6" VerticalAlignment="Center" />

@@ -12,13 +12,18 @@ namespace FastTorrentDownload;
 
 public partial class App : Application
 {
+    private readonly AppPaths _paths;
+
+    public App() : this(new AppPaths()) { }
+    public App(AppPaths paths) => _paths = paths;
+
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var paths = new AppPaths();
+            var paths = _paths;
             AppLogger.Init(paths);
             var settings = new SettingsStore(paths);
             var engine = new TorrentEngineService(paths);
