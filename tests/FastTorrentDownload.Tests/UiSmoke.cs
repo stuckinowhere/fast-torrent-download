@@ -66,6 +66,10 @@ internal static class UiSmoke
             Button("Settings").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
             await Task.Delay(150);
             var settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
+            Require(!settings.CanResize && settings.WindowState == WindowState.Normal,
+                "Settings must disable native resizing and maximization.");
+            Require(Math.Abs(settings.Width - main.Width) < 1 && Math.Abs(settings.Height - main.Height) < 1,
+                "Settings must open at the same default size as the app.");
             Require(settings.FindControl<TextBox>("SeedRatioTextBox") is null && settings.FindControl<TextBox>("DownloadLimitTextBox") is not null, "Completion settings are inconsistent.");
             await VerifySettingsLayoutAsync(settings, 440);
             await VerifySettingsLayoutAsync(settings, 360);

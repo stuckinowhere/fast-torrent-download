@@ -4,8 +4,8 @@
         x:Class="FastTorrentDownload.Views.SettingsWindow"
         x:DataType="local:SettingsWindow"
         Title="Settings"
-        Width="680" MinWidth="520" Height="700" MinHeight="360" MaxHeight="760"
-        ShowInTaskbar="False"
+        Width="1180" MinWidth="520" Height="760" MinHeight="360" MaxHeight="760"
+        CanResize="False" ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner">
   <Grid Margin="24" RowDefinitions="*,Auto,Auto" RowSpacing="12">
     <ScrollViewer Padding="0,0,12,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
