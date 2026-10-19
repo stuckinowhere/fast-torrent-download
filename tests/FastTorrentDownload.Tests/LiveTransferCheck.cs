@@ -66,7 +66,7 @@ internal static class LiveTransferCheck
             await viewModel.RefreshAsync();
             viewModel.SelectedTorrent = viewModel.Torrents.Single();
             await viewModel.StartSelectedAsync();
-            await UntilAsync(() => manager.State == TorrentState.Downloading);
+            await UntilAsync(() => manager.State is TorrentState.Downloading or TorrentState.Seeding);
             await viewModel.RefreshAsync();
             await manager.AddPeerAsync(new PeerInfo(new Uri($"ipv4://127.0.0.1:{seedPort}")));
             await UntilAsync(() => TorrentEngineService.GetSelectedBytes(manager).Verified >= pieceLength);
@@ -85,7 +85,7 @@ internal static class LiveTransferCheck
             Require(File.Exists(downloadedPath), "Pause lost the downloaded file.");
 
             await viewModel.StartSelectedAsync();
-            await UntilAsync(() => manager.State == TorrentState.Downloading);
+            await UntilAsync(() => manager.State is TorrentState.Downloading or TorrentState.Seeding);
             await manager.AddPeerAsync(new PeerInfo(new Uri($"ipv4://127.0.0.1:{seedPort}")));
             if (complete)
             {
