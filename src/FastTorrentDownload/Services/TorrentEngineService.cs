@@ -527,7 +527,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public async Task<IReadOnlyList<TorrentSnapshot>> GetSnapshotsAsync()
+    public async Task<IReadOnlyList<TorrentSnapshot>> GetSnapshotsAsync(IReadOnlySet<string>? deferredCompletionIds = null)
     {
         KeyValuePair<string, (TorrentManager Manager, string Destination)>[] entries;
         await _gate.WaitAsync();
@@ -538,6 +538,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         {
             var manager = pair.Value.Manager;
             if (ShouldRemoveCompletedTorrent(manager.State, manager.PartialProgress) &&
+                deferredCompletionIds?.Contains(pair.Key) != true &&
                 !_completionErrors.ContainsKey(pair.Key) && _operations.TryAdd(pair.Key, "Stopping…"))
             {
                 _automaticRemovals[pair.Key] = CompleteAsync(pair.Key, manager, pair.Value.Destination);

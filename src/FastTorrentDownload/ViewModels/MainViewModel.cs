@@ -17,6 +17,7 @@ public sealed partial class MainViewModel(
     private readonly SettingsStore _settingsStore = settingsStore;
     private readonly ReleaseUpdateService _updateService = updateService;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private readonly HashSet<string> _rowOperations = new();
     private AppSettings _settings = new();
 
     public ObservableCollection<TorrentRowViewModel> Torrents { get; } = [];
@@ -124,6 +125,7 @@ public sealed partial class MainViewModel(
     private async Task RunRowActionAsync(TorrentRowViewModel row, string operation, Func<Task> action, string pending, string success)
     {
         if (row.IsBusy) return;
+        _rowOperations.Add(row.Id);
         row.Operation = operation;
         StatusMessage = pending;
         try
@@ -136,6 +138,7 @@ public sealed partial class MainViewModel(
         }
         finally
         {
+            _rowOperations.Remove(row.Id);
             row.Operation = null;
         }
     }
@@ -257,13 +260,15 @@ public sealed partial class MainViewModel(
         try
         {
             ExpireNotification(DateTimeOffset.UtcNow);
-            var snapshots = await _engine.GetSnapshotsAsync();
+            var snapshots = await _engine.GetSnapshotsAsync(_rowOperations.ToHashSet());
             var rowsById = Torrents.ToDictionary(row => row.Id);
             foreach (var snapshot in snapshots)
             {
                 if (rowsById.Remove(snapshot.Id, out var row))
                 {
+                    var localOperation = _rowOperations.Contains(row.Id) ? row.Operation : null;
                     row.Update(snapshot);
+                    if (localOperation is not null) row.Operation = localOperation;
                 }
                 else
                 {

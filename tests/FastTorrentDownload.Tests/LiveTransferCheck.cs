@@ -25,7 +25,7 @@ internal static class LiveTransferCheck
         try
         {
             const int pieceLength = 16_384;
-            var data = RandomNumberGenerator.GetBytes(1_000_123);
+            var data = RandomNumberGenerator.GetBytes(complete ? 1_000_123 : 4_000_123);
             var hashes = Enumerable.Range(0, (data.Length + pieceLength - 1) / pieceLength)
                 .SelectMany(index => SHA1.HashData(data.AsSpan(index * pieceLength, Math.Min(pieceLength, data.Length - index * pieceLength)))).ToArray();
             var encoded = new BEncodedDictionary
@@ -62,14 +62,15 @@ internal static class LiveTransferCheck
             await service.CommitAddAsync(preview, ["loopback.bin"], startImmediately: false);
             var manager = downloadEngine.Torrents.Single();
             var downloadedPath = manager.Files.Single().FullPath;
-            await service.StartAsync(preview.Id);
-            await UntilAsync(() => manager.State == TorrentState.Downloading);
-            await manager.AddPeerAsync(new PeerInfo(new Uri($"ipv4://127.0.0.1:{seedPort}")));
-            await UntilAsync(() => TorrentEngineService.GetSelectedBytes(manager).Verified >= pieceLength);
-            await manager.TrackerManager.AddTrackerAsync(trackerUri);
             var viewModel = new MainViewModel(service, new SettingsStore(paths), new ReleaseUpdateService());
             await viewModel.RefreshAsync();
             viewModel.SelectedTorrent = viewModel.Torrents.Single();
+            await viewModel.StartSelectedAsync();
+            await UntilAsync(() => manager.State == TorrentState.Downloading);
+            await viewModel.RefreshAsync();
+            await manager.AddPeerAsync(new PeerInfo(new Uri($"ipv4://127.0.0.1:{seedPort}")));
+            await UntilAsync(() => TorrentEngineService.GetSelectedBytes(manager).Verified >= pieceLength);
+            await manager.TrackerManager.AddTrackerAsync(trackerUri);
             var row = viewModel.SelectedTorrent;
             var watch = Stopwatch.StartNew();
             var pause = viewModel.PauseTorrentAsync(preview.Id);
@@ -79,7 +80,7 @@ internal static class LiveTransferCheck
             Require(row.StateLabel == "Stopping…", "The row did not keep its operation state during refresh.");
             await viewModel.PauseTorrentAsync(preview.Id); // Duplicate input must be ignored.
             await pause.WaitAsync(TimeSpan.FromSeconds(8));
-            Require(watch.Elapsed < TimeSpan.FromSeconds(8) && manager.State == TorrentState.Stopped, "The tracker blocked pause.");
+            Require(watch.Elapsed < TimeSpan.FromSeconds(8) && manager.State == TorrentState.Stopped, $"Pause did not finish correctly: {manager.State}, elapsed={watch.Elapsed}.");
             Require(clients.Count > 0, "The stalled tracker was not exercised.");
             Require(File.Exists(downloadedPath), "Pause lost the downloaded file.");
 
