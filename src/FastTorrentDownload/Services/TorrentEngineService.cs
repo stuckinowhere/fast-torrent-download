@@ -21,8 +21,10 @@ public sealed class TorrentEngineService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, string> _operations = new();
     private readonly ConcurrentDictionary<string, Task> _automaticRemovals = new();
     private readonly ConcurrentDictionary<string, string> _completionErrors = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastReannounce = new();
     private readonly ConcurrentQueue<TorrentCompletion> _completions = new();
     public static TimeSpan StopAnnounceTimeout { get; } = TimeSpan.FromSeconds(2);
+    private bool _keepingSystemAwake;
     private bool _disposed;
 
     public TorrentEngineService(AppPaths paths) => _paths = paths;
@@ -71,6 +73,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 Track(manager, manager.SavePath);
                 await manager.UpdateSettingsAsync(CreateTorrentSettings(_settings));
                 await UpgradeLegacyTrackersAsync(manager);
+                await SplitTrackerTiersAsync(manager);
             }
 
             var repaused = 0;
@@ -120,6 +123,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             {
                 await SeedDefaultTrackersAsync(manager);
                 await PruneEmptyTrackersAsync(manager, cancellationToken);
+                await SplitTrackerTiersAsync(manager);
                 await manager.StartAsync();
                 try
                 {
@@ -260,6 +264,30 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
 
         await SeedDefaultTrackersAsync(manager);
+    }
+
+    private static async Task SplitTrackerTiersAsync(TorrentManager manager)
+    {
+        foreach (var tier in manager.TrackerManager.Tiers.ToList())
+        {
+            if (tier.Trackers.Count <= 1)
+            {
+                continue;
+            }
+
+            foreach (var tracker in tier.Trackers.Skip(1).ToList())
+            {
+                try
+                {
+                    await manager.TrackerManager.RemoveTrackerAsync(tracker);
+                    await manager.TrackerManager.AddTrackerAsync(tracker.Uri);
+                }
+                catch
+                {
+                    // Best-effort tier split must never break add or restore.
+                }
+            }
+        }
     }
 
     private static async Task PruneEmptyTrackersAsync(TorrentManager manager, CancellationToken cancellationToken)
@@ -433,6 +461,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 _pausedHashes.Remove(hash);
                 throw;
             }
+            await SplitTrackerTiersAsync(pending.Manager);
             if (startImmediately) await pending.Manager.StartAsync();
         }
         finally
@@ -533,6 +562,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             _entries.Remove(id);
             _pausedHashes.Remove(DescribeInfoHashes(entry.Manager.InfoHashes));
             _completionErrors.TryRemove(id, out _);
+            _lastReannounce.TryRemove(id, out _);
         }
         finally
         {
@@ -579,6 +609,21 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 _automaticRemovals[pair.Key] = CompleteAsync(pair.Key, manager, pair.Value.Destination);
             }
 
+            if (manager.State == TorrentState.Downloading)
+            {
+                var now = DateTimeOffset.UtcNow;
+                var last = _lastReannounce.GetOrAdd(pair.Key, now);
+                if (ShouldReannounceStarvedTorrent(manager.State, manager.OpenConnections, now - last) &&
+                    _lastReannounce.TryUpdate(pair.Key, now, last))
+                {
+                    _ = ReannounceStarvedTorrentAsync(manager);
+                }
+            }
+            else
+            {
+                _lastReannounce.TryRemove(pair.Key, out _);
+            }
+
             var monitor = manager.Monitor;
             var (selectedBytes, verifiedBytes) = GetSelectedBytes(manager);
             var downloaded = monitor.DataBytesReceived;
@@ -602,7 +647,52 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 diagnostics));
         }
 
+        UpdateSystemSleepAssertion(snapshots.Any(s => s.State is "Downloading" or "Metadata" or "Hashing" or "Starting"));
         return snapshots;
+    }
+
+    public static bool ShouldReannounceStarvedTorrent(TorrentState state, int openConnections, TimeSpan elapsedSinceLastAnnounce) =>
+        state == TorrentState.Downloading &&
+        openConnections < EnginePerformanceTuning.LowPeerThreshold &&
+        elapsedSinceLastAnnounce >= EnginePerformanceTuning.ReannounceInterval;
+
+    private static async Task ReannounceStarvedTorrentAsync(TorrentManager manager)
+    {
+        try
+        {
+            await manager.TrackerManager.AnnounceAsync(CancellationToken.None);
+            if (manager.CanUseDht)
+            {
+                await manager.DhtAnnounceAsync();
+            }
+        }
+        catch
+        {
+            // Background swarm refresh must never disrupt active transfers.
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = false)]
+    private static extern uint SetThreadExecutionState(uint esFlags);
+    private const uint EsContinuous = 0x80000000;
+    private const uint EsSystemRequired = 0x00000001;
+
+    private void UpdateSystemSleepAssertion(bool hasActiveTransfers)
+    {
+        if (_keepingSystemAwake == hasActiveTransfers || !OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        _keepingSystemAwake = hasActiveTransfers;
+        try
+        {
+            _ = SetThreadExecutionState(hasActiveTransfers ? EsContinuous | EsSystemRequired : EsContinuous);
+        }
+        catch
+        {
+            // Non-critical power hint.
+        }
     }
 
     private async Task CompleteAsync(string id, TorrentManager manager, string destination)
@@ -638,6 +728,21 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
     public static (long Selected, long Verified) GetSelectedBytes(TorrentManager manager)
     {
+        if (manager.Torrent is not null && manager.Files.Count > 0 && manager.Files.All(file => file.Priority != Priority.DoNotDownload))
+        {
+            var total = manager.Torrent.Size;
+            if (manager.Bitfield.AllTrue) return (total, total);
+            if (manager.Bitfield.AllFalse || manager.Bitfield.Length == 0) return (total, 0);
+            var pieceLength = (long)manager.Torrent.PieceLength;
+            var verifiedBytes = (long)manager.Bitfield.TrueCount * pieceLength;
+            if (manager.Bitfield[^1])
+            {
+                var lastPieceSize = total - (long)(manager.Bitfield.Length - 1) * pieceLength;
+                verifiedBytes -= pieceLength - Math.Max(0, lastPieceSize);
+            }
+            return (total, Math.Clamp(verifiedBytes, 0, total));
+        }
+
         long selected = 0, verified = 0;
         foreach (var file in manager.Files.Where(file => file.Priority != Priority.DoNotDownload))
         {
@@ -703,6 +808,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
 
         _disposed = true;
+        UpdateSystemSleepAssertion(false);
         await Task.WhenAll(_automaticRemovals.Values);
         await _gate.WaitAsync();
         try

@@ -13,8 +13,10 @@ public static class EnginePerformanceTuning
     public const int MaxConnectionsPerTorrent = 250;
     public const int DiskCacheBytes = 64 * 1024 * 1024;
     public const int UploadSlots = 16;
+    public const int LowPeerThreshold = 50;
     public static readonly TimeSpan ConnectionTimeout = TimeSpan.FromSeconds(7);
     public static readonly TimeSpan WebSeedDelay = TimeSpan.FromSeconds(15);
+    public static readonly TimeSpan ReannounceInterval = TimeSpan.FromMinutes(3);
 
     // MonoTorrent attempts outgoing handshakes in the order listed in AllowedEncryption.
     // Prefer RC4 encryption before PlainText even when encryption is not strictly required

@@ -1,11 +1,15 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using MonoTorrent.BEncoding;
 
 namespace FastTorrentDownload.Services;
 
 public static class DhtBootstrapCache
 {
+    private const int CompactNodeBytes = 26;
+    private const int MaxSavedNodes = 256;
+
     private static readonly (string Host, int Port)[] Routers =
     [
         ("dht.transmissionbt.com", 6881),
@@ -20,32 +24,114 @@ public static class DhtBootstrapCache
         {
             // MonoTorrent 3.0.2 loads dht_nodes.cache as FLAT bytes sliced into 26-byte
             // compact nodes (Node.FromCompactNode over BEncodedString.FromMemory), but
-            // saves it back as a bencoded LIST (or "le" when the table is empty). Neither
-            // saved form can be reloaded, so always write a fresh flat seed at startup:
-            // 20-byte id + 4-byte IPv4 + 2-byte big-endian port, concatenated.
-            var nodes = await ResolveRouterNodesAsync(cancellationToken);
-            if (nodes.Count == 0)
+            // saves it back on shutdown as a bencoded LIST of 26-byte strings ("l26:...e").
+            // Unwrap any saved bencoded list back into flat 26-byte nodes and append the
+            // DNS bootstrap routers so warm DHT routing tables survive restarts.
+            var file = Path.Combine(cacheDirectory, "dht_nodes.cache");
+            var preserved = new List<byte[]>();
+            var seenEndpoints = new HashSet<string>(StringComparer.Ordinal);
+            if (File.Exists(file))
             {
-                AppLogger.Log("DHT bootstrap seed skipped: no router resolved");
+                try
+                {
+                    var existing = await File.ReadAllBytesAsync(file, cancellationToken);
+                    foreach (var node in ExtractSavedCompactNodes(existing))
+                    {
+                        if (seenEndpoints.Add(EndpointKey(node)) && preserved.Count < MaxSavedNodes)
+                        {
+                            preserved.Add(node);
+                        }
+                    }
+                }
+                catch
+                {
+                    // Corrupt cache files are replaced cleanly below.
+                }
+            }
+
+            var routers = await ResolveRouterNodesAsync(cancellationToken);
+            foreach (var router in routers)
+            {
+                if (seenEndpoints.Add(EndpointKey(router)))
+                {
+                    preserved.Add(router);
+                }
+            }
+
+            if (preserved.Count == 0)
+            {
+                AppLogger.Log("DHT bootstrap seed skipped: no nodes available");
                 return;
             }
 
-            var file = Path.Combine(cacheDirectory, "dht_nodes.cache");
-            using var stream = new MemoryStream(nodes.Count * 26);
-            foreach (var compact in nodes)
+            using var stream = new MemoryStream(preserved.Count * CompactNodeBytes);
+            foreach (var compact in preserved)
             {
                 stream.Write(compact, 0, compact.Length);
             }
 
             var blob = stream.ToArray();
             await File.WriteAllBytesAsync(file, blob, cancellationToken);
-            AppLogger.Log($"DHT bootstrap cache seeded with {nodes.Count} routers ({blob.Length} bytes flat)");
+            AppLogger.Log($"DHT bootstrap cache ready with {preserved.Count} nodes ({routers.Count} routers, {blob.Length} bytes flat)");
         }
         catch (Exception exception)
         {
             AppLogger.LogException("DHT cache seeding skipped", exception);
         }
     }
+
+    public static IReadOnlyList<byte[]> ExtractSavedCompactNodes(byte[] raw)
+    {
+        ArgumentNullException.ThrowIfNull(raw);
+        var results = new List<byte[]>();
+        if (raw.Length >= 2 && raw[0] == (byte)'l' && raw[^1] == (byte)'e')
+        {
+            try
+            {
+                var list = BEncodedValue.Decode<BEncodedList>(raw);
+                foreach (var item in list.OfType<BEncodedString>())
+                {
+                    SliceCompactNodes(item.Span, results);
+                }
+
+                return results;
+            }
+            catch
+            {
+                // Fall back to flat slicing if the payload merely starts/ends with 'l'/'e' bytes.
+            }
+        }
+
+        if (raw.Length >= CompactNodeBytes && raw.Length % CompactNodeBytes == 0)
+        {
+            SliceCompactNodes(raw, results);
+        }
+
+        return results;
+    }
+
+    private static void SliceCompactNodes(ReadOnlySpan<byte> span, List<byte[]> destination)
+    {
+        if (span.Length < CompactNodeBytes || span.Length % CompactNodeBytes != 0)
+        {
+            return;
+        }
+
+        for (var offset = 0; offset < span.Length; offset += CompactNodeBytes)
+        {
+            var slice = span.Slice(offset, CompactNodeBytes);
+            // Skip invalid port 0 entries.
+            if (slice[24] == 0 && slice[25] == 0)
+            {
+                continue;
+            }
+
+            destination.Add(slice.ToArray());
+        }
+    }
+
+    private static string EndpointKey(ReadOnlySpan<byte> compactNode) =>
+        Convert.ToHexString(compactNode.Slice(20, 6));
 
     public static byte[] ToCompactNode(IPAddress address, int port, ReadOnlySpan<byte> nodeId)
     {
@@ -61,7 +147,7 @@ public static class DhtBootstrapCache
             throw new ArgumentException("Only IPv4 compact nodes are supported.", nameof(address));
         }
 
-        var compact = new byte[26];
+        var compact = new byte[CompactNodeBytes];
         nodeId.CopyTo(compact.AsSpan(0, 20));
         addressBytes.CopyTo(compact, 20);
         compact[24] = (byte)(port >> 8);

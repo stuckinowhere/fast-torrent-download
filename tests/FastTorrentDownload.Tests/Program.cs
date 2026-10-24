@@ -107,7 +107,7 @@ Check("non-torrent paths are rejected as torrent sources", () =>
     }
 });
 
-Check("dht bootstrap nodes use flat 26-byte compact layout", () =>
+Check("dht bootstrap nodes use flat 26-byte compact layout and unwrap bencoded saved lists", () =>
 {
     var nodeId = Enumerable.Range(1, 20).Select(i => (byte)i).ToArray();
     var compact = DhtBootstrapCache.ToCompactNode(IPAddress.Parse("1.2.3.4"), 6881, nodeId);
@@ -115,6 +115,12 @@ Check("dht bootstrap nodes use flat 26-byte compact layout", () =>
     Require(compact.Take(20).SequenceEqual(nodeId));
     Require(compact[20] == 1 && compact[21] == 2 && compact[22] == 3 && compact[23] == 4);
     Require(compact[24] == 0x1A && compact[25] == 0xE1);
+    var savedList = new BEncodedList { new BEncodedString(compact) }.Encode();
+    var extractedFromList = DhtBootstrapCache.ExtractSavedCompactNodes(savedList);
+    Require(extractedFromList.Count == 1 && extractedFromList[0].SequenceEqual(compact));
+    var extractedFromFlat = DhtBootstrapCache.ExtractSavedCompactNodes(compact);
+    Require(extractedFromFlat.Count == 1 && extractedFromFlat[0].SequenceEqual(compact));
+    Require(DhtBootstrapCache.ExtractSavedCompactNodes(new BEncodedList().Encode()).Count == 0);
 });
 
 Check("update picks the portable zip plus its checksum from release assets", () =>
@@ -203,13 +209,17 @@ Check("tracker prune drops proven-empty trackers but never strands the torrent",
     Require(TorrentEngineService.SelectTrackersToPrune([]).Count == 0);
 });
 
-Check("tracker rotation keeps a lone connected peer instead of restarting", () =>
+Check("tracker rotation keeps a lone connected peer instead of restarting and starved downloads reannounce periodically", () =>
 {
     Require(TorrentEngineService.ShouldRotateTrackerCoverage(0, 0));
     Require(TorrentEngineService.ShouldRotateTrackerCoverage(1, 0));
     Require(!TorrentEngineService.ShouldRotateTrackerCoverage(1, 1));
     Require(!TorrentEngineService.ShouldRotateTrackerCoverage(2, 0));
     Require(!TorrentEngineService.ShouldRotateTrackerCoverage(0, 1));
+    Require(TorrentEngineService.ShouldReannounceStarvedTorrent(TorrentState.Downloading, 20, TimeSpan.FromMinutes(3)));
+    Require(!TorrentEngineService.ShouldReannounceStarvedTorrent(TorrentState.Downloading, 60, TimeSpan.FromMinutes(3)));
+    Require(!TorrentEngineService.ShouldReannounceStarvedTorrent(TorrentState.Downloading, 20, TimeSpan.FromMinutes(1)));
+    Require(!TorrentEngineService.ShouldReannounceStarvedTorrent(TorrentState.Seeding, 5, TimeSpan.FromMinutes(5)));
 });
 
 Check("trackerless magnets fall back to known public trackers", () =>
