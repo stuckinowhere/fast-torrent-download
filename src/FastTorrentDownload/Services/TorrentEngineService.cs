@@ -70,6 +70,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             {
                 Track(manager, manager.SavePath);
                 await manager.UpdateSettingsAsync(CreateTorrentSettings(_settings));
+                await UpgradeLegacyTrackersAsync(manager);
             }
 
             var repaused = 0;
@@ -206,18 +207,30 @@ public sealed class TorrentEngineService : IAsyncDisposable
         new("udp://explodie.org:6969/announce"),
     ];
 
+    private static readonly HashSet<Uri> LegacyDeadDefaultTrackers =
+    [
+        new("https://opentracker.io/announce"),
+        new("https://torrent.eu.org/announce.php"),
+    ];
+
     private static async Task SeedDefaultTrackersAsync(TorrentManager manager)
     {
-        if (CountTrackers(manager) > 0)
-        {
-            return;
-        }
-
+        var existing = manager.TrackerManager.Tiers
+            .SelectMany(tier => tier.Trackers)
+            .Select(tracker => tracker.Uri)
+            .ToHashSet();
+        var added = 0;
         foreach (var uri in DefaultPublicTrackers)
         {
+            if (existing.Contains(uri))
+            {
+                continue;
+            }
+
             try
             {
                 await manager.TrackerManager.AddTrackerAsync(uri);
+                added++;
             }
             catch (Exception exception)
             {
@@ -226,7 +239,27 @@ public sealed class TorrentEngineService : IAsyncDisposable
             }
         }
 
-        AppLogger.Log($"Default tracker: seeded {CountTrackers(manager)} public trackers for trackerless magnet.");
+        if (added > 0)
+        {
+            AppLogger.Log($"Default tracker: seeded {added} public trackers (total {CountTrackers(manager)}).");
+        }
+    }
+
+    private static async Task UpgradeLegacyTrackersAsync(TorrentManager manager)
+    {
+        var trackers = manager.TrackerManager.Tiers.SelectMany(tier => tier.Trackers).ToList();
+        var legacy = trackers.Where(tracker => LegacyDeadDefaultTrackers.Contains(tracker.Uri)).ToList();
+        if (legacy.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var tracker in legacy)
+        {
+            await manager.TrackerManager.RemoveTrackerAsync(tracker);
+        }
+
+        await SeedDefaultTrackersAsync(manager);
     }
 
     private static async Task PruneEmptyTrackersAsync(TorrentManager manager, CancellationToken cancellationToken)
@@ -763,9 +796,8 @@ public sealed class TorrentEngineService : IAsyncDisposable
             AutoSaveLoadMagnetLinkMetadata = true,
             AllowLocalPeerDiscovery = settings.EnableLocalPeerDiscovery,
             AllowPortForwarding = settings.EnablePortForwarding,
-            AllowedEncryption = settings.RequireEncryptedPeerConnections
-                ? [EncryptionType.RC4Header, EncryptionType.RC4Full]
-                : [EncryptionType.PlainText, EncryptionType.RC4Header, EncryptionType.RC4Full],
+            AllowedEncryption = EnginePerformanceTuning.GetAllowedEncryption(settings.RequireEncryptedPeerConnections).ToList(),
+            ConnectionTimeout = EnginePerformanceTuning.ConnectionTimeout,
             DhtEndPoint = settings.EnableDht ? new IPEndPoint(listenAddress, settings.ListenPort) : null,
             ListenEndPoints = new Dictionary<string, IPEndPoint>
             {
@@ -788,7 +820,8 @@ public sealed class TorrentEngineService : IAsyncDisposable
         CreateContainingDirectory = true,
         MaximumConnections = EnginePerformanceTuning.MaxConnectionsPerTorrent,
         MaximumDownloadRate = ToBytesPerSecond(settings.MaximumDownloadKiBPerSecond),
-        MaximumUploadRate = ToBytesPerSecond(settings.MaximumUploadKiBPerSecond)
+        MaximumUploadRate = ToBytesPerSecond(settings.MaximumUploadKiBPerSecond),
+        UploadSlots = EnginePerformanceTuning.UploadSlots
     }.ToSettings();
 
     private static int ToBytesPerSecond(int kibPerSecond) =>

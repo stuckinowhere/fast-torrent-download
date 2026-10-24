@@ -152,15 +152,23 @@ Check("update parses coreutils checksum files", () =>
     Require(AppUpdateService.ParseChecksumFile("not-a-hash  update-portable.zip\n", "update-portable.zip") is null);
 });
 
-Check("engine tuning stays above library defaults for faster swarms", () =>
+Check("engine tuning stays above library defaults for faster swarms and prefers encrypted handshakes", () =>
 {
-    Require(EnginePerformanceTuning.MaxConnections == 500);
-    Require(EnginePerformanceTuning.MaxHalfOpenConnections == 50);
-    Require(EnginePerformanceTuning.MaxConnectionsPerTorrent == 100);
-    Require(EnginePerformanceTuning.DiskCacheBytes == 32 * 1024 * 1024);
+    Require(EnginePerformanceTuning.MaxConnections == 800);
+    Require(EnginePerformanceTuning.MaxHalfOpenConnections == 150);
+    Require(EnginePerformanceTuning.MaxConnectionsPerTorrent == 250);
+    Require(EnginePerformanceTuning.DiskCacheBytes == 64 * 1024 * 1024);
+    Require(EnginePerformanceTuning.UploadSlots == 16);
+    Require(EnginePerformanceTuning.ConnectionTimeout == TimeSpan.FromSeconds(7));
     Require(EnginePerformanceTuning.WebSeedDelay == TimeSpan.FromSeconds(15));
     Require(EnginePerformanceTuning.MaxConnectionsPerTorrent <= EnginePerformanceTuning.MaxConnections);
     Require(EnginePerformanceTuning.MaxHalfOpenConnections <= EnginePerformanceTuning.MaxConnections);
+    var preferred = EnginePerformanceTuning.GetAllowedEncryption(requireEncrypted: false);
+    Require(preferred[0] == MonoTorrent.Connections.EncryptionType.RC4Header &&
+            preferred[1] == MonoTorrent.Connections.EncryptionType.RC4Full &&
+            preferred[2] == MonoTorrent.Connections.EncryptionType.PlainText);
+    var required = EnginePerformanceTuning.GetAllowedEncryption(requireEncrypted: true);
+    Require(!required.Contains(MonoTorrent.Connections.EncryptionType.PlainText));
 });
 
 Check("row detail shows seeder and peer counts", () =>
