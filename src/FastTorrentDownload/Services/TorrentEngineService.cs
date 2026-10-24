@@ -198,10 +198,12 @@ public sealed class TorrentEngineService : IAsyncDisposable
     // torrent, so a dead entry only costs a few seconds.
     public static IReadOnlyList<Uri> DefaultPublicTrackers { get; } =
     [
-        new("https://opentracker.io/announce"),
+        new("udp://tracker.opentrackr.org:1337/announce"),
         new("udp://open.stealth.si:80/announce"),
-        new("https://torrent.eu.org/announce.php"),
+        new("udp://tracker.torrent.eu.org:451/announce"),
+        new("udp://open.demonii.com:1337/announce"),
         new("udp://exodus.desync.com:6969/announce"),
+        new("udp://explodie.org:6969/announce"),
     ];
 
     private static async Task SeedDefaultTrackersAsync(TorrentManager manager)
