@@ -134,6 +134,8 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 }
             }
 
+            PathGuard.ThrowIfUnsafeTorrentFiles(safeDestination, manager.Files.Select(file => file.Path));
+
             var id = Guid.NewGuid().ToString("N");
             await _gate.WaitAsync(cancellationToken);
             try
@@ -371,6 +373,8 @@ public sealed class TorrentEngineService : IAsyncDisposable
             {
                 throw new KeyNotFoundException("That torrent preview is no longer available.");
             }
+
+            PathGuard.ThrowIfUnsafeTorrentFiles(pending.Destination, pending.Manager.Files.Select(file => file.Path));
 
             var selected = selectedFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var file in pending.Manager.Files)
