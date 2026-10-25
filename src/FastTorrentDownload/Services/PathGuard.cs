@@ -64,7 +64,7 @@ public static class PathGuard
         }
 
         var parts = trimmed.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 0 || parts.Any(part => part is "." or ".." || part.Contains(':')))
+        if (parts.Length == 0 || parts.Any(part => part.TrimEnd(' ') is "." or ".." || part.Contains(':')))
         {
             return false;
         }

@@ -268,6 +268,8 @@ Check("torrent file paths must stay inside the download folder", () =>
         Require(!PathGuard.IsSafeTorrentFilePath(dest, @"C:\Windows\win.ini"));
         Require(!PathGuard.IsSafeTorrentFilePath(dest, @"foo\..\..\secret.txt"));
         Require(!PathGuard.IsSafeTorrentFilePath(dest, "foo/../../secret.txt"));
+        Require(!PathGuard.IsSafeTorrentFilePath(dest, "foo/.. /secret.txt"));
+        Require(!PathGuard.IsSafeTorrentFilePath(dest, "video.mkv:stream"));
         Require(!PathGuard.IsSafeTorrentFilePath(dest, ""));
         Require(!PathGuard.IsSafeTorrentFilePath(dest, "   "));
         try
