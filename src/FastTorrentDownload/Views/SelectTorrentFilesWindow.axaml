@@ -17,9 +17,10 @@
       </Grid>
     </StackPanel>
 
-    <StackPanel Grid.Row="1" x:Name="LoadingPanel" Spacing="12" Margin="0,8">
+    <StackPanel Grid.Row="1" x:Name="LoadingPanel" Spacing="10" Margin="0,8">
       <ProgressBar IsIndeterminate="True" Width="240" HorizontalAlignment="Center" />
-      <TextBlock Text="Fetching file list…" Opacity="0.72" HorizontalAlignment="Center" />
+      <TextBlock x:Name="LoadingStatusTextBlock" Text="Fetching file list…" Opacity="0.82" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
+      <TextBlock x:Name="LoadingDetailTextBlock" Opacity="0.68" FontSize="12" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" IsVisible="False" />
     </StackPanel>
 
     <ListBox Grid.Row="2" x:Name="FilesListBox" ItemsSource="{Binding Files}"

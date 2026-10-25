@@ -101,7 +101,21 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public async Task<TorrentAddPreview> PrepareAddAsync(string source, string? destination, CancellationToken cancellationToken = default)
+    public static string SanitizeDisplayName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return string.Empty;
+        }
+
+        return string.Join(' ', name.Split(['\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    public async Task<TorrentAddPreview> PrepareAddAsync(
+        string source,
+        string? destination,
+        CancellationToken cancellationToken = default,
+        Action<string, string?>? onProgress = null)
     {
         ClientEngine? engine = null;
         TorrentManager manager;
@@ -147,7 +161,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 using var raceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 try
                 {
-                    var swarmTask = WaitForMetadataWithTrackerRotationAsync(manager, raceCts.Token);
+                    var swarmTask = WaitForMetadataWithTrackerRotationAsync(manager, raceCts.Token, onProgress);
                     if (magnet is not null)
                     {
                         var cacheTask = TryFetchCachedTorrentAsync(magnet, raceCts.Token);
@@ -207,9 +221,10 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 _gate.Release();
             }
 
+            var cleanName = SanitizeDisplayName(manager.Name);
             return new TorrentAddPreview(
                 id,
-                string.IsNullOrWhiteSpace(manager.Name) ? "Torrent" : manager.Name,
+                string.IsNullOrWhiteSpace(cleanName) ? "Torrent" : cleanName,
                 manager.Files.Select(file => new TorrentFilePreview(file.Path, file.Length)).ToArray());
         }
         catch (Exception exception)
@@ -402,21 +417,60 @@ public sealed class TorrentEngineService : IAsyncDisposable
         return client;
     }
 
-    private static async Task WaitForMetadataWithTrackerRotationAsync(TorrentManager manager, CancellationToken cancellationToken)
+    private static async Task WaitForMetadataWithTrackerRotationAsync(
+        TorrentManager manager,
+        CancellationToken cancellationToken,
+        Action<string, string?>? onProgress = null)
     {
-        // MonoTorrent announces to a single tracker until one succeeds — even when the
-        // response holds zero peers — so a first-tried empty tracker starves the fetch
-        // while sibling trackers hold live peers, and restarts re-announce to the same
-        // tracker. A starved fetch therefore drops the empty tracker and restarts
-        // (bounded), deterministically walking the list until peers arrive.
         const int maxRotations = 5;
         var rotations = 0;
-        var firstSlice = true;
+        var startedAt = DateTimeOffset.UtcNow;
+        var lastRotationAt = startedAt;
         while (!manager.HasMetadata)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var now = DateTimeOffset.UtcNow;
+            var elapsed = Math.Max(1, (int)(now - startedAt).TotalSeconds);
+            var openConnections = manager.OpenConnections;
+            var knownPeers = (await manager.GetPeersAsync()).Count + manager.Peers.Available;
+            var trackerCount = CountTrackers(manager);
+
+            if (openConnections > 0)
+            {
+                onProgress?.Invoke(
+                    $"Downloading file list from {openConnections} connected peer(s)… ({elapsed}s)",
+                    $"{knownPeers} peer IPs discovered across {trackerCount} trackers");
+            }
+            else if (elapsed < 8)
+            {
+                onProgress?.Invoke(
+                    $"Searching DHT & {trackerCount} trackers for peers… ({elapsed}s)",
+                    knownPeers > 0
+                        ? $"{knownPeers} peer IPs discovered — testing connections…"
+                        : "Contacting public trackers and DHT nodes…");
+            }
+            else
+            {
+                onProgress?.Invoke(
+                    $"Waiting for a reachable peer ({elapsed}s / 30s timeout)…",
+                    knownPeers > 0
+                        ? $"0 seeders / 0 reachable peers responded out of {knownPeers} IPs listed by trackers. This magnet appears dead (no active seeders)."
+                        : "0 seeders / 0 peers found on trackers or DHT. This magnet appears dead.");
+            }
+
+            if (openConnections == 0 && elapsed >= 30)
+            {
+                throw new TimeoutException(
+                    $"No active seeders or reachable peers responded for this magnet link (0 connected out of {knownPeers} known peer IPs after 30s). The torrent appears to have 0 online seeders.");
+            }
+
+            if (openConnections > 0 && elapsed >= 60)
+            {
+                throw new TimeoutException("Connected peers did not provide the torrent file list within 60s.");
+            }
+
             using var slice = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            slice.CancelAfter(firstSlice ? TimeSpan.FromSeconds(20) : TimeSpan.FromSeconds(15));
+            slice.CancelAfter(TimeSpan.FromSeconds(1));
             try
             {
                 await manager.WaitForMetadataAsync(slice.Token);
@@ -424,15 +478,17 @@ public sealed class TorrentEngineService : IAsyncDisposable
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                // Slice expired with metadata still missing; fall through to the rotation.
+                // 1s status slice expired; continue polling and check rotation interval.
             }
 
-            if (!firstSlice && rotations < maxRotations && await RotateStarvedTrackersAsync(manager, cancellationToken))
+            if ((DateTimeOffset.UtcNow - lastRotationAt) >= TimeSpan.FromSeconds(15))
             {
-                rotations++;
+                lastRotationAt = DateTimeOffset.UtcNow;
+                if (rotations < maxRotations && await RotateStarvedTrackersAsync(manager, cancellationToken))
+                {
+                    rotations++;
+                }
             }
-
-            firstSlice = false;
         }
     }
 

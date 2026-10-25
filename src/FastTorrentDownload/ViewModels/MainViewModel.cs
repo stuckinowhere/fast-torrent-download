@@ -75,8 +75,12 @@ public sealed partial class MainViewModel(
         StatusMessage = "Ready — add a magnet link or .torrent file.";
     }
 
-    public Task<TorrentAddPreview> PrepareAddAsync(string source, string? destination, CancellationToken cancellationToken = default) =>
-        _engine.PrepareAddAsync(source, destination, cancellationToken);
+    public Task<TorrentAddPreview> PrepareAddAsync(
+        string source,
+        string? destination,
+        CancellationToken cancellationToken = default,
+        Action<string, string?>? onProgress = null) =>
+        _engine.PrepareAddAsync(source, destination, cancellationToken, onProgress);
 
     public async Task AddAsync(TorrentAddPreview preview, IReadOnlyCollection<string> selectedFiles, bool startImmediately)
     {
