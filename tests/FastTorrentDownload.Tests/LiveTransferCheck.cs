@@ -21,6 +21,8 @@ internal static class LiveTransferCheck
         tracker.Start();
         var trackerUri = new Uri($"http://127.0.0.1:{((IPEndPoint)tracker.LocalEndpoint).Port}/announce");
         var clients = new List<TcpClient>();
+        var metadataSeedPort = 0;
+        var servingMetadata = complete;
         var server = HoldTrackerRequestsAsync();
         try
         {
@@ -44,6 +46,7 @@ internal static class LiveTransferCheck
             using var port = new TcpListener(IPAddress.Loopback, 0);
             port.Start();
             var seedPort = ((IPEndPoint)port.LocalEndpoint).Port;
+            metadataSeedPort = seedPort;
             port.Stop();
             using var seedEngine = new ClientEngine(Settings(Path.Combine(root, "seed-cache"), seedPort));
             var seed = await seedEngine.AddAsync(Torrent.Load(source), seedFolder, new TorrentSettingsBuilder
@@ -58,7 +61,15 @@ internal static class LiveTransferCheck
             using var downloadEngine = new ClientEngine(Settings(paths.CacheDirectory, null, 128 * 1024));
             var service = new TorrentEngineService(paths);
             typeof(TorrentEngineService).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(service, downloadEngine);
-            var preview = await service.PrepareAddAsync(source, Path.Combine(root, "download"));
+            var input = complete
+                ? new MagnetLink(Torrent.Load(source).InfoHashes, "loopback.bin", [trackerUri.AbsoluteUri]).ToV1String()
+                : source;
+            var preview = await service.PrepareAddAsync(input, Path.Combine(root, "download"), timeout.Token);
+            servingMetadata = false;
+            Require(downloadEngine.Torrents.Single().State == TorrentState.Stopped,
+                "Preview must not start a payload download.");
+            Require(!Directory.EnumerateFiles(Path.Combine(root, "download"), "*", SearchOption.AllDirectories).Any(),
+                "Preview wrote payload files before the user selected them.");
             await service.CommitAddAsync(preview, ["loopback.bin"], startImmediately: false);
             var manager = downloadEngine.Torrents.Single();
             var downloadedPath = manager.Files.Single().FullPath;
@@ -135,7 +146,32 @@ internal static class LiveTransferCheck
         {
             try
             {
-                while (!timeout.IsCancellationRequested) clients.Add(await tracker.AcceptTcpClientAsync(timeout.Token));
+                while (!timeout.IsCancellationRequested)
+                {
+                    var client = await tracker.AcceptTcpClientAsync(timeout.Token);
+                    if (!servingMetadata)
+                    {
+                        clients.Add(client);
+                        continue;
+                    }
+
+                    using (client)
+                    {
+                        var stream = client.GetStream();
+                        using var reader = new StreamReader(stream, System.Text.Encoding.ASCII, leaveOpen: true);
+                        while (await reader.ReadLineAsync(timeout.Token) is { Length: > 0 }) { }
+                        var peers = new byte[] { 127, 0, 0, 1, (byte)(metadataSeedPort >> 8), (byte)metadataSeedPort };
+                        var body = new BEncodedDictionary
+                        {
+                            ["interval"] = new BEncodedNumber(60),
+                            ["peers"] = new BEncodedString(peers)
+                        }.Encode();
+                        var headers = System.Text.Encoding.ASCII.GetBytes(
+                            $"HTTP/1.1 200 OK\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n");
+                        await stream.WriteAsync(headers, timeout.Token);
+                        await stream.WriteAsync(body, timeout.Token);
+                    }
+                }
             }
             catch (OperationCanceledException) { }
             catch (SocketException) when (timeout.IsCancellationRequested) { }

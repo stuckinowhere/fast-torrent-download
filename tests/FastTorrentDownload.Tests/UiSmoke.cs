@@ -66,8 +66,9 @@ internal static class UiSmoke
 
             Button("Settings").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
             await Task.Delay(150);
+            foreach (var update in main.OwnedWindows.OfType<UpdateAvailableWindow>().ToArray()) update.Close();
             Require(viewModel.IsSettingsOpen && !viewModel.IsQueueOpen && main.OwnedWindows.Count == 0,
-                "Settings must open as an in-app page inside MainWindow, not as a separate window.");
+                $"Settings must open inside MainWindow: settings={viewModel.IsSettingsOpen}, queue={viewModel.IsQueueOpen}, owned={string.Join(',', main.OwnedWindows.Select(window => window.GetType().Name))}.");
             Require(main.FindControl<TextBox>("SeedRatioTextBox") is null && main.FindControl<TextBox>("DownloadLimitTextBox") is not null, "Completion settings are inconsistent.");
             await VerifySettingsLayoutAsync(main, 600);
             main.Width = 1180;
