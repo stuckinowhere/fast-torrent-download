@@ -1,4 +1,4 @@
-﻿using FastTorrentDownload.Models;
+using FastTorrentDownload.Models;
 using FastTorrentDownload.Services;
 using FastTorrentDownload.ViewModels;
 using System.Linq;
@@ -98,6 +98,24 @@ Check("magnet links with query parameters are accepted as torrent sources", () =
     const string magnet = "magnet:?xt=urn:btih:792b9fa5793e46c51db29f59c6a9037cf20492f4&dn=Torrentio%0A1080p";
     Require(PathGuard.ResolveTorrentSource(magnet) == magnet);
     Require(PathGuard.ResolveTorrentSource("  MAGNET:?xt=urn:btih:abc123  ") == "MAGNET:?xt=urn:btih:abc123");
+    var samplePiece = new byte[16_384];
+    var sampleDict = new BEncodedDictionary
+    {
+        ["info"] = new BEncodedDictionary
+        {
+            ["name"] = new BEncodedString("fast-magnet-cache.bin"),
+            ["length"] = new BEncodedNumber(samplePiece.Length),
+            ["piece length"] = new BEncodedNumber(samplePiece.Length),
+            ["pieces"] = new BEncodedString(SHA1.HashData(samplePiece))
+        }
+    };
+    var sampleBytes = sampleDict.Encode();
+    var sampleTorrent = Torrent.Load(sampleBytes);
+    var matchingMagnet = new MagnetLink(sampleTorrent.InfoHashes);
+    var wrongMagnet = MagnetLink.Parse("magnet:?xt=urn:btih:792b9fa5793e46c51db29f59c6a9037cf20492f4");
+    Require(!TorrentEngineService.TryCacheMagnetTorrentBytes(wrongMagnet, sampleBytes, out _));
+    Require(TorrentEngineService.TryCacheMagnetTorrentBytes(matchingMagnet, sampleBytes, out var verified) && verified is not null);
+    Require(TorrentEngineService.TryGetVerifiedCachedTorrent(matchingMagnet, out var fromCache) && fromCache?.Name == "fast-magnet-cache.bin");
 });
 
 Check("non-torrent paths are rejected as torrent sources", () =>

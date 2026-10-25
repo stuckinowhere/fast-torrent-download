@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Collections.Concurrent;
 using FastTorrentDownload.Models;
 using MonoTorrent;
@@ -24,6 +24,10 @@ public sealed class TorrentEngineService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastReannounce = new();
     private readonly ConcurrentQueue<TorrentCompletion> _completions = new();
     public static TimeSpan StopAnnounceTimeout { get; } = TimeSpan.FromSeconds(2);
+    public static TimeSpan FastMetadataStopTimeout { get; } = TimeSpan.FromMilliseconds(150);
+    private static readonly HttpClient MetadataCacheHttpClient = CreateMetadataCacheHttpClient();
+    private static readonly ConcurrentDictionary<string, byte[]> CachedMagnetTorrents = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, Task<Torrent?>> InFlightMagnetPrefetches = new(StringComparer.OrdinalIgnoreCase);
     private bool _keepingSystemAwake;
     private bool _disposed;
 
@@ -101,6 +105,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
     {
         ClientEngine? engine = null;
         TorrentManager manager;
+        MagnetLink? magnet = null;
         string safeDestination;
         await _gate.WaitAsync(cancellationToken);
         try
@@ -108,9 +113,22 @@ public sealed class TorrentEngineService : IAsyncDisposable
             engine = RequireEngine();
             var safeSource = PathGuard.ResolveTorrentSource(source);
             safeDestination = PathGuard.ResolveDestination(_settings.DefaultDownloadFolder, destination);
-            manager = safeSource.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase)
-                ? await engine.AddAsync(MagnetLink.Parse(safeSource), safeDestination, CreateTorrentSettings(_settings))
-                : await engine.AddAsync(Torrent.Load(safeSource), safeDestination, CreateTorrentSettings(_settings));
+            if (safeSource.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
+            {
+                magnet = MagnetLink.Parse(safeSource);
+                if (TryGetVerifiedCachedTorrent(magnet, out var prefetched))
+                {
+                    manager = await AddTorrentFromCachedMetadataAsync(engine, magnet, prefetched!, safeDestination);
+                }
+                else
+                {
+                    manager = await engine.AddAsync(magnet, safeDestination, CreateTorrentSettings(_settings));
+                }
+            }
+            else
+            {
+                manager = await engine.AddAsync(Torrent.Load(safeSource), safeDestination, CreateTorrentSettings(_settings));
+            }
         }
         finally
         {
@@ -122,20 +140,59 @@ public sealed class TorrentEngineService : IAsyncDisposable
             if (!manager.HasMetadata)
             {
                 await SeedDefaultTrackersAsync(manager);
-                await PruneEmptyTrackersAsync(manager, cancellationToken);
                 await SplitTrackerTiersAsync(manager);
                 await manager.StartAsync();
+                _ = TriggerImmediateAnnouncesAsync(manager);
+                Torrent? cachedTorrent = null;
+                using var raceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 try
                 {
-                    // No fixed timeout: thin swarms can take several minutes of DHT
-                    // sampling before a metadata holder is found (uTorrent waits
-                    // indefinitely too). The caller cancels via the token — the file
-                    // picker wires its Cancel button and window close to it.
-                    await WaitForMetadataWithTrackerRotationAsync(manager, cancellationToken);
+                    var swarmTask = WaitForMetadataWithTrackerRotationAsync(manager, raceCts.Token);
+                    if (magnet is not null)
+                    {
+                        var cacheTask = TryFetchCachedTorrentAsync(magnet, raceCts.Token);
+                        var first = await Task.WhenAny(swarmTask, cacheTask);
+                        if (first == cacheTask)
+                        {
+                            var candidate = await cacheTask;
+                            if (candidate is not null && !manager.HasMetadata)
+                            {
+                                cachedTorrent = candidate;
+                                raceCts.Cancel();
+                            }
+                            else
+                            {
+                                await swarmTask;
+                            }
+                        }
+                        else
+                        {
+                            await swarmTask;
+                            raceCts.Cancel();
+                        }
+                    }
+                    else
+                    {
+                        await swarmTask;
+                    }
                 }
                 finally
                 {
-                    await manager.StopAsync();
+                    await manager.StopAsync(FastMetadataStopTimeout);
+                }
+
+                if (cachedTorrent is not null && magnet is not null)
+                {
+                    await _gate.WaitAsync(cancellationToken);
+                    try
+                    {
+                        await engine.RemoveAsync(manager);
+                        manager = await AddTorrentFromCachedMetadataAsync(engine, magnet, cachedTorrent, safeDestination);
+                    }
+                    finally
+                    {
+                        _gate.Release();
+                    }
                 }
             }
 
@@ -158,9 +215,191 @@ public sealed class TorrentEngineService : IAsyncDisposable
         catch (Exception exception)
         {
             AppLogger.LogException("PrepareAdd failed", exception);
+            if (manager.State is not TorrentState.Stopped)
+            {
+                try { await manager.StopAsync(FastMetadataStopTimeout); } catch { }
+            }
             await engine!.RemoveAsync(manager);
             throw;
         }
+    }
+
+    public static void PrefetchMagnetMetadata(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return;
+        }
+
+        var trimmed = source.Trim();
+        if (!trimmed.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            var magnet = MagnetLink.Parse(trimmed);
+            _ = TryFetchCachedTorrentAsync(magnet, CancellationToken.None);
+        }
+        catch
+        {
+            // Ignore partial or invalid magnet strings while typing.
+        }
+    }
+
+    public static bool TryCacheMagnetTorrentBytes(MagnetLink magnet, byte[] torrentBytes, out Torrent? verifiedTorrent)
+    {
+        verifiedTorrent = null;
+        var hash = magnet.InfoHashes.V1?.ToHex().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(hash) ||
+            torrentBytes is not { Length: > 32 and < 10 * 1024 * 1024 } ||
+            !Torrent.TryLoad(torrentBytes, out var loaded) ||
+            loaded.InfoHashes != magnet.InfoHashes)
+        {
+            return false;
+        }
+
+        CachedMagnetTorrents[hash] = torrentBytes;
+        verifiedTorrent = loaded;
+        return true;
+    }
+
+    public static bool TryGetVerifiedCachedTorrent(MagnetLink magnet, out Torrent? torrent)
+    {
+        torrent = null;
+        var hash = magnet.InfoHashes.V1?.ToHex().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(hash) ||
+            !CachedMagnetTorrents.TryGetValue(hash, out var bytes) ||
+            !Torrent.TryLoad(bytes, out var loaded) ||
+            loaded.InfoHashes != magnet.InfoHashes)
+        {
+            return false;
+        }
+
+        torrent = loaded;
+        return true;
+    }
+
+    public static async Task<Torrent?> TryFetchCachedTorrentAsync(MagnetLink magnet, CancellationToken cancellationToken)
+    {
+        if (TryGetVerifiedCachedTorrent(magnet, out var existing))
+        {
+            return existing;
+        }
+
+        var hash = magnet.InfoHashes.V1?.ToHex().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(hash))
+        {
+            return null;
+        }
+
+        var task = InFlightMagnetPrefetches.GetOrAdd(hash, _ => FetchFromPublicCachesCoreAsync(magnet, hash));
+        try
+        {
+            return await task.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    private static async Task<Torrent?> FetchFromPublicCachesCoreAsync(MagnetLink magnet, string hash)
+    {
+        try
+        {
+            string[] urls =
+            [
+                $"https://itorrents.org/torrent/{hash}.torrent",
+                $"https://torrage.info/torrent.php?h={hash}",
+                $"https://btcache.me/torrent/{hash}"
+            ];
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+            var tasks = urls.Select(url => FetchSingleCacheUrlAsync(url, magnet, cts.Token)).ToList();
+            while (tasks.Count > 0)
+            {
+                var finished = await Task.WhenAny(tasks);
+                tasks.Remove(finished);
+                var result = await finished;
+                if (result is not null)
+                {
+                    cts.Cancel();
+                    return result;
+                }
+            }
+
+            return null;
+        }
+        finally
+        {
+            InFlightMagnetPrefetches.TryRemove(hash, out _);
+        }
+    }
+
+    private static async Task<Torrent?> FetchSingleCacheUrlAsync(string url, MagnetLink magnet, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await MetadataCacheHttpClient.GetAsync(url, HttpCompletionOption.ResponseContentRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            return TryCacheMagnetTorrentBytes(magnet, bytes, out var verified) ? verified : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<TorrentManager> AddTorrentFromCachedMetadataAsync(
+        ClientEngine engine,
+        MagnetLink magnet,
+        Torrent cachedTorrent,
+        string safeDestination)
+    {
+        var manager = await engine.AddAsync(cachedTorrent, safeDestination, CreateTorrentSettings(_settings));
+        if (magnet.AnnounceUrls is not null)
+        {
+            foreach (var url in magnet.AnnounceUrls)
+            {
+                if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                {
+                    try { await manager.TrackerManager.AddTrackerAsync(uri); } catch { }
+                }
+            }
+        }
+
+        await SeedDefaultTrackersAsync(manager);
+        await SplitTrackerTiersAsync(manager);
+        return manager;
+    }
+
+    private static async Task TriggerImmediateAnnouncesAsync(TorrentManager manager)
+    {
+        try
+        {
+            await manager.TrackerManager.AnnounceAsync(CancellationToken.None);
+            if (manager.CanUseDht)
+            {
+                await manager.DhtAnnounceAsync();
+            }
+        }
+        catch
+        {
+            // Initial parallel announce kick-off is best-effort.
+        }
+    }
+
+    private static HttpClient CreateMetadataCacheHttpClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) FastTorrentDownload/1.0");
+        return client;
     }
 
     private static async Task WaitForMetadataWithTrackerRotationAsync(TorrentManager manager, CancellationToken cancellationToken)
