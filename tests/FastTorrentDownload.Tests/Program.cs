@@ -1,4 +1,4 @@
-using FastTorrentDownload.Models;
+﻿using FastTorrentDownload.Models;
 using FastTorrentDownload.Services;
 using FastTorrentDownload.ViewModels;
 using System.Linq;
@@ -70,6 +70,12 @@ Check("diagnostics distinguish missing peers, idle peers, limits and unavailable
     Require(TorrentEngineService.EffectiveLimit(0, 512) == 512);
     Require(TorrentEngineService.EffectiveLimit(1000, 512) == 512);
     Require(TorrentEngineService.EffectiveLimit(1000, 0) == 1000);
+    Require((data with { ConnectedPeers = 8, ReceivingPeers = 2, AvailablePiecesPercent = 100, IncomingPeers = 0, ListenPort = 51413 }).IsInboundPortLikelyClosed);
+    Require((data with { ConnectedPeers = 8, ReceivingPeers = 2, AvailablePiecesPercent = 100, IncomingPeers = 0, ListenPort = 51413 }).Diagnosis(500).Contains("inbound port 51413 appears closed"));
+    Require(!(data with { ConnectedPeers = 8, ReceivingPeers = 2, AvailablePiecesPercent = 100, IncomingPeers = 3, ListenPort = 51413 }).IsInboundPortLikelyClosed);
+    Require((data with { ConnectedPeers = 8, ReceivingPeers = 2, AvailablePiecesPercent = 100, IncomingPeers = 3, ListenPort = 51413 }).Describe(500).Contains("incoming on port 51413: 3"));
+    var netInfo = NetworkBinding.DetectLocalNetworkInfo(51413);
+    Require(netInfo.ListenPort == 51413 && !string.IsNullOrWhiteSpace(netInfo.HostName) && !string.IsNullOrWhiteSpace(netInfo.LocalIpv4));
 });
 
 Check("listener binding accepts IPv4 and rejects ambiguous inputs", () =>

@@ -18,12 +18,18 @@ public sealed partial class MainViewModel(
     private readonly ReleaseUpdateService _updateService = updateService;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly HashSet<string> _rowOperations = new();
+    private readonly Dictionary<string, int> _closedPortStreaks = new();
+    private readonly HashSet<string> _notifiedErrors = new();
+    private bool _portWarningDismissed;
+    private bool _portWarningNotified;
     private AppSettings _settings = new();
 
     public ObservableCollection<TorrentRowViewModel> Torrents { get; } = [];
     public ObservableCollection<ActivityEntry> Activity { get; } = [];
     private DateTimeOffset _notificationUntil;
     [ObservableProperty] private ActivityEntry? _notification;
+    [ObservableProperty] private bool _hasPortWarning;
+    [ObservableProperty] private string _portWarningMessage = string.Empty;
     public bool HasNotification => Notification is not null;
     public bool CanOpenNotificationFolder => Notification?.Destination is not null;
     public bool HasTorrents => Torrents.Count > 0;
@@ -73,7 +79,22 @@ public sealed partial class MainViewModel(
         await _engine.CommitAddAsync(preview, selectedFiles, startImmediately);
         await SyncPauseIntentsAsync();
         await RefreshAsync();
-        StatusMessage = startImmediately ? "Added and started." : "Added in a paused state.";
+        StatusMessage = startImmediately
+            ? $"Added and started {preview.Name}."
+            : $"Added {preview.Name} in a paused state.";
+        ShowNotification(StatusMessage, null);
+    }
+
+    public void DismissPortWarning()
+    {
+        _portWarningDismissed = true;
+        HasPortWarning = false;
+    }
+
+    public void NotifyActionFailure(string message)
+    {
+        StatusMessage = message;
+        ShowNotification(message, null);
     }
 
     public Task CancelAddAsync(string id) => _engine.CancelAddAsync(id);
@@ -288,6 +309,8 @@ public sealed partial class MainViewModel(
                     SelectedTorrent = null;
                 }
 
+                _closedPortStreaks.Remove(obsolete.Id);
+                _notifiedErrors.RemoveWhere(key => key.StartsWith(obsolete.Id + ":", StringComparison.Ordinal));
                 Torrents.Remove(obsolete);
             }
 
@@ -297,6 +320,8 @@ public sealed partial class MainViewModel(
             TotalUploadRate = $"↑ {TorrentRowViewModel.FormatRate(totalUpload)}";
             QueueSummary = snapshots.Count == 1 ? "1 torrent" : $"{snapshots.Count} torrents";
             OnPropertyChanged(nameof(HasTorrents));
+            NotifySnapshotErrors(snapshots);
+            UpdatePortWarning(snapshots);
             foreach (var completion in _engine.TakeCompletions())
             {
                 StatusMessage = completion.Error is null
@@ -316,6 +341,85 @@ public sealed partial class MainViewModel(
     }
 
     public Task ShutdownAsync() => _engine.DisposeAsync().AsTask();
+
+    private void NotifySnapshotErrors(IReadOnlyList<TorrentSnapshot> snapshots)
+    {
+        foreach (var snapshot in snapshots)
+        {
+            var error = snapshot.Diagnostics?.TorrentError ?? (snapshot.State == "Error" ? "Torrent stopped due to an error." : null);
+            var prefix = snapshot.Id + ":";
+            if (string.IsNullOrWhiteSpace(error))
+            {
+                _notifiedErrors.RemoveWhere(key => key.StartsWith(prefix, StringComparison.Ordinal));
+                continue;
+            }
+
+            var key = prefix + error;
+            if (_notifiedErrors.Add(key))
+            {
+                StatusMessage = $"Error in {snapshot.Name}: {error}";
+                ShowNotification(StatusMessage, snapshot.Destination);
+            }
+        }
+    }
+
+    private void UpdatePortWarning(IReadOnlyList<TorrentSnapshot> snapshots)
+    {
+        if (snapshots.Any(snapshot => snapshot.Diagnostics?.IncomingPeers > 0))
+        {
+            _closedPortStreaks.Clear();
+            HasPortWarning = false;
+            return;
+        }
+
+        var anyDownloading = false;
+        var shouldWarn = false;
+        foreach (var snapshot in snapshots)
+        {
+            if (snapshot.State != "Downloading")
+            {
+                _closedPortStreaks.Remove(snapshot.Id);
+                continue;
+            }
+
+            anyDownloading = true;
+            if (snapshot.Diagnostics?.IsInboundPortLikelyClosed == true)
+            {
+                var streak = _closedPortStreaks.GetValueOrDefault(snapshot.Id) + 1;
+                _closedPortStreaks[snapshot.Id] = streak;
+                if (streak >= 5)
+                {
+                    shouldWarn = true;
+                }
+            }
+            else
+            {
+                _closedPortStreaks.Remove(snapshot.Id);
+            }
+        }
+
+        if (!anyDownloading)
+        {
+            HasPortWarning = false;
+            return;
+        }
+
+        if (shouldWarn)
+        {
+            PortWarningMessage = $"Inbound port {_settings.ListenPort} (TCP/UDP) appears closed (0 incoming peers). Open it in your router for much faster downloads.";
+            if (!_portWarningDismissed)
+            {
+                HasPortWarning = true;
+            }
+
+            if (!_portWarningNotified)
+            {
+                _portWarningNotified = true;
+                StatusMessage = $"Inbound port {_settings.ListenPort} appears closed (0 incoming peers) — click 'How to open port' to boost speed.";
+                ShowNotification(StatusMessage, null);
+            }
+        }
+    }
 
     private void ShowNotification(string message, string? destination)
     {

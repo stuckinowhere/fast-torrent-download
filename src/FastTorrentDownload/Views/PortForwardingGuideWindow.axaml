@@ -1,0 +1,44 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:FastTorrentDownload.Views"
+        x:Class="FastTorrentDownload.Views.PortForwardingGuideWindow"
+        x:DataType="local:PortForwardingGuideWindow"
+        Title="Open router port (Port Forwarding guide)"
+        ShowInTaskbar="False"
+        Width="580"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+  <StackPanel Margin="24" Spacing="14">
+    <TextBlock Text="Boost speed by opening your inbound BitTorrent port" FontSize="19" FontWeight="Bold" TextWrapping="Wrap" />
+    <TextBlock Opacity="0.85" TextWrapping="Wrap"
+               Text="When your router blocks inbound connections (0 incoming peers), only peers with open ports can connect to you. Adding a single Port Forwarding rule in your router (or TP-Link Deco app) lets all seeders connect while keeping UPnP turned off." />
+
+    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="1" Padding="14">
+      <StackPanel Spacing="6">
+        <TextBlock Text="Detected network settings for this PC" FontWeight="SemiBold" />
+        <SelectableTextBlock x:Name="DeviceLineTextBlock" FontFamily="Consolas" TextWrapping="Wrap" />
+        <SelectableTextBlock x:Name="IpLineTextBlock" FontFamily="Consolas" FontWeight="Bold" TextWrapping="Wrap" />
+        <SelectableTextBlock x:Name="PortLineTextBlock" FontFamily="Consolas" FontWeight="Bold" TextWrapping="Wrap" />
+        <SelectableTextBlock x:Name="GatewayLineTextBlock" FontFamily="Consolas" Opacity="0.8" TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+
+    <StackPanel Spacing="6">
+      <TextBlock Text="Steps in your router / TP-Link Deco mobile app:" FontWeight="SemiBold" />
+      <TextBlock Text="1. Open More → Advanced → NAT Forwarding → Port Forwarding → Add rule (+)." TextWrapping="Wrap" />
+      <TextBlock x:Name="StepTwoTextBlock" TextWrapping="Wrap" />
+      <TextBlock x:Name="StepThreeTextBlock" TextWrapping="Wrap" />
+      <TextBlock Text="4. Optional: under Address Reservation, reserve this Internal IP for your PC so it never changes." TextWrapping="Wrap" Opacity="0.85" />
+      <TextBlock Text="Security note: You can leave UPnP disabled. As soon as your download finishes (100%) or you close the app, Windows stops listening on this port automatically." TextWrapping="Wrap" Opacity="0.75" FontSize="12" />
+    </StackPanel>
+
+    <TextBlock x:Name="CopiedStatusTextBlock" IsVisible="False" FontWeight="SemiBold" />
+
+    <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="10">
+      <Button Grid.Column="0" Content="Copy IP" Click="CopyIp_Click" />
+      <Button Grid.Column="1" Content="Copy port" Click="CopyPort_Click" />
+      <Button Grid.Column="3" Classes="primary dialog-footer" Content="Close" Click="Close_Click" MinWidth="120" />
+    </Grid>
+  </StackPanel>
+</Window>

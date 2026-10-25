@@ -8,17 +8,23 @@ public sealed record TorrentDiagnostics(
     int KnownPeers, int ConnectedPeers, int ReceivingPeers, int ConnectedSeeders,
     double? AvailablePiecesPercent, string DhtState, int DhtNodes,
     long DownloadLimit, long UploadLimit, IReadOnlyList<TrackerDiagnostic> Trackers,
-    string? PeerError = null, string? TorrentError = null)
+    string? PeerError = null, string? TorrentError = null,
+    int IncomingPeers = 0, int ListenPort = 51413)
 {
+    public bool IsInboundPortLikelyClosed => ConnectedPeers >= 5 && IncomingPeers == 0;
+
     public string Describe(long downloadRate)
     {
         var peers = PeerError is null
-            ? $"Known peers: {KnownPeers} · connected: {ConnectedPeers} · sending data to us: {ReceivingPeers} · connected seeders: {ConnectedSeeders}"
+            ? $"Known peers: {KnownPeers} · connected: {ConnectedPeers} (incoming on port {ListenPort}: {IncomingPeers}) · sending data to us: {ReceivingPeers} · connected seeders: {ConnectedSeeders}"
             : $"Peer statistics unavailable: {PeerError}";
+        var portStatus = PeerError is null && IsInboundPortLikelyClosed
+            ? $"\nInbound port {ListenPort} (TCP/UDP): 0 incoming peers — open port {ListenPort} in your router (Port Forwarding) to allow all seeders to connect."
+            : string.Empty;
         var coverage = AvailablePiecesPercent is { } percent ? $"{percent:0.0}%" : "unknown";
         var trackers = Trackers.Count == 0 ? "No trackers; discovery depends on DHT / peer exchange."
             : string.Join(Environment.NewLine, Trackers.Select(tracker => $"{tracker.Address} · {tracker.State}{(string.IsNullOrWhiteSpace(tracker.Message) ? "" : " · " + tracker.Message)}"));
-        return $"{Diagnosis(downloadRate)}\n{peers}\nPiece coverage (local + connected peers): {coverage}\nDHT: {DhtState} · {DhtNodes} nodes\nEffective download limit: {Limit(DownloadLimit)} · upload limit: {Limit(UploadLimit)}\nTorrent / disk error: {TorrentError ?? "none reported"}\nTrackers:\n{trackers}";
+        return $"{Diagnosis(downloadRate)}\n{peers}{portStatus}\nPiece coverage (local + connected peers): {coverage}\nDHT: {DhtState} · {DhtNodes} nodes\nEffective download limit: {Limit(DownloadLimit)} · upload limit: {Limit(UploadLimit)}\nTorrent / disk error: {TorrentError ?? "none reported"}\nTrackers:\n{trackers}";
     }
 
     public string Diagnosis(long downloadRate)
@@ -29,6 +35,7 @@ public sealed record TorrentDiagnostics(
         if (ReceivingPeers == 0) return "Peers are connected, but none are currently sending us data.";
         if (DownloadLimit > 0 && downloadRate >= DownloadLimit * 0.9) return "Download speed is close to the configured limit.";
         if (AvailablePiecesPercent is < 100) return "Local data and connected peers do not currently cover all pieces.";
+        if (IsInboundPortLikelyClosed) return $"Data is flowing, but inbound port {ListenPort} appears closed (0 incoming peers) — opening it in your router can significantly increase speed.";
         return "Data is flowing; these indicators do not establish a single speed bottleneck.";
     }
 

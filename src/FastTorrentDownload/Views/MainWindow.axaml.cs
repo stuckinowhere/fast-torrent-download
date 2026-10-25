@@ -37,7 +37,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            _viewModel.StatusMessage = $"Could not start the torrent engine: {exception.Message}";
+            _viewModel.NotifyActionFailure($"Could not start the torrent engine: {exception.Message}");
         }
     }
 
@@ -114,7 +114,15 @@ public partial class MainWindow : Window
                 await _viewModel.CancelAddAsync(preview.Id);
             }
 
-            _viewModel.StatusMessage = loadError is null ? "Add cancelled." : $"Could not add torrent: {loadError}";
+            if (loadError is null)
+            {
+                _viewModel.StatusMessage = "Add cancelled.";
+            }
+            else
+            {
+                _viewModel.NotifyActionFailure($"Could not add torrent: {loadError}");
+            }
+
             return;
         }
 
@@ -125,7 +133,7 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             await _viewModel.CancelAddAsync(preview.Id);
-            _viewModel.StatusMessage = $"Could not add torrent: {exception.Message}";
+            _viewModel.NotifyActionFailure($"Could not add torrent: {exception.Message}");
         }
     }
 
@@ -171,6 +179,14 @@ public partial class MainWindow : Window
 
     private void Folder_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.OpenSelectedFolder();
     private void NotificationFolder_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.OpenNotificationFolder();
+    private async void PortGuide_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        var info = Services.NetworkBinding.DetectLocalNetworkInfo(_viewModel.Settings.ListenPort);
+        await new PortForwardingGuideWindow(info) { Icon = Icon }.ShowDialog(this);
+    }
+
+    private void DismissPortWarning_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.DismissPortWarning();
+
     private async void Activity_Click(object? sender, RoutedEventArgs eventArgs) =>
         await new ActivityWindow(_viewModel.Activity) { Icon = Icon }.ShowDialog(this);
 
@@ -217,7 +233,7 @@ public partial class MainWindow : Window
             }
             catch (Exception exception)
             {
-                _viewModel.StatusMessage = $"Could not save settings: {exception.Message}";
+                _viewModel.NotifyActionFailure($"Could not save settings: {exception.Message}");
             }
         }
     }
@@ -231,7 +247,7 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             Services.AppLogger.LogException("Torrent action failed", exception);
-            _viewModel.StatusMessage = exception.Message;
+            _viewModel.NotifyActionFailure(exception.Message);
         }
     }
 
