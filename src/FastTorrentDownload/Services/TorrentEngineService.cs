@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Collections.Concurrent;
 using FastTorrentDownload.Models;
 using MonoTorrent;
@@ -129,7 +129,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 {
                     // No fixed timeout: thin swarms can take several minutes of DHT
                     // sampling before a metadata holder is found (uTorrent waits
-                    // indefinitely too). The caller cancels via the token â€” the file
+                    // indefinitely too). The caller cancels via the token — the file
                     // picker wires its Cancel button and window close to it.
                     await WaitForMetadataWithTrackerRotationAsync(manager, cancellationToken);
                 }
@@ -165,8 +165,8 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
     private static async Task WaitForMetadataWithTrackerRotationAsync(TorrentManager manager, CancellationToken cancellationToken)
     {
-        // MonoTorrent announces to a single tracker until one succeeds â€” even when the
-        // response holds zero peers â€” so a first-tried empty tracker starves the fetch
+        // MonoTorrent announces to a single tracker until one succeeds — even when the
+        // response holds zero peers — so a first-tried empty tracker starves the fetch
         // while sibling trackers hold live peers, and restarts re-announce to the same
         // tracker. A starved fetch therefore drops the empty tracker and restarts
         // (bounded), deterministically walking the list until peers arrive.
@@ -489,20 +489,20 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
     public IReadOnlySet<string> PausedInfoHashes => _pausedHashes;
 
-    public Task StartAsync(string id) => RunOperationAsync(id, "Startingâ€¦", async manager =>
+    public Task StartAsync(string id) => RunOperationAsync(id, "Starting…", async manager =>
     {
         _completionErrors.TryRemove(id, out _);
         _pausedHashes.Remove(DescribeInfoHashes(manager.InfoHashes));
         await manager.StartAsync();
     });
 
-    public Task PauseAsync(string id) => RunOperationAsync(id, "Stoppingâ€¦", async manager =>
+    public Task PauseAsync(string id) => RunOperationAsync(id, "Stopping…", async manager =>
     {
         _pausedHashes.Add(DescribeInfoHashes(manager.InfoHashes));
         await manager.StopAsync(StopAnnounceTimeout);
     });
 
-    public Task RecheckAsync(string id) => RunOperationAsync(id, "Recheckingâ€¦", async manager =>
+    public Task RecheckAsync(string id) => RunOperationAsync(id, "Rechecking…", async manager =>
     {
         _completionErrors.TryRemove(id, out _);
         _pausedHashes.Remove(DescribeInfoHashes(manager.InfoHashes));
@@ -510,7 +510,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         await manager.HashCheckAsync(autoStart: true);
     });
 
-    public Task RemoveAsync(string id) => RunOperationAsync(id, "Stoppingâ€¦", manager => RemoveCoreAsync(id, manager));
+    public Task RemoveAsync(string id) => RunOperationAsync(id, "Stopping…", manager => RemoveCoreAsync(id, manager));
 
     private async Task RunOperationAsync(string id, string operation, Func<TorrentManager, Task> action)
     {
@@ -604,7 +604,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             var manager = pair.Value.Manager;
             if (ShouldRemoveCompletedTorrent(manager.State, manager.PartialProgress) &&
                 deferredCompletionIds?.Contains(pair.Key) != true &&
-                !_completionErrors.ContainsKey(pair.Key) && _operations.TryAdd(pair.Key, "Stoppingâ€¦"))
+                !_completionErrors.ContainsKey(pair.Key) && _operations.TryAdd(pair.Key, "Stopping…"))
             {
                 _automaticRemovals[pair.Key] = CompleteAsync(pair.Key, manager, pair.Value.Destination);
             }
@@ -631,7 +631,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             var diagnostics = await GetDiagnosticsAsync(pair.Key, manager);
             snapshots.Add(new TorrentSnapshot(
                 pair.Key,
-                string.IsNullOrWhiteSpace(manager.Name) ? "Fetching metadataâ€¦" : manager.Name,
+                string.IsNullOrWhiteSpace(manager.Name) ? "Fetching metadata…" : manager.Name,
                 pair.Value.Destination,
                 manager.State.ToString(),
                 selectedBytes > 0 ? 100.0 * verifiedBytes / selectedBytes : manager.PartialProgress,
@@ -797,8 +797,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         return new TorrentDiagnostics(known, connected, receiving, seeders, coverage,
             _settings.EnableDht && manager.CanUseDht ? engine.Dht.State.ToString() : "Disabled for this torrent", engine.Dht.NodeCount,
             EffectiveLimit(engine.Settings.MaximumDownloadRate, manager.Settings.MaximumDownloadRate),
-            EffectiveLimit(engine.Settings.MaximumUploadRate, manager.Settings.MaximumUploadRate), trackers, peerError, error,
-            incoming, _settings.ListenPort);
+            EffectiveLimit(engine.Settings.MaximumUploadRate, manager.Settings.MaximumUploadRate), trackers, peerError, error, incoming, _settings.ListenPort);
     }
 
     public static long EffectiveLimit(long global, long torrent) => global <= 0 ? torrent : torrent <= 0 ? global : Math.Min(global, torrent);

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
@@ -25,7 +25,7 @@ internal static class LiveTransferCheck
         try
         {
             const int pieceLength = 16_384;
-            var data = RandomNumberGenerator.GetBytes(complete ? 1_000_123 : 4_000_123);
+            var data = RandomNumberGenerator.GetBytes(complete ? 1_000_123 : 8_000_123);
             var hashes = Enumerable.Range(0, (data.Length + pieceLength - 1) / pieceLength)
                 .SelectMany(index => SHA1.HashData(data.AsSpan(index * pieceLength, Math.Min(pieceLength, data.Length - index * pieceLength)))).ToArray();
             var encoded = new BEncodedDictionary
@@ -100,14 +100,14 @@ internal static class LiveTransferCheck
             else
             {
                 await UntilAsync(() => TorrentEngineService.GetSelectedBytes(manager).Verified >= pieceLength * 2);
-                await viewModel.RefreshAsync();
+                await viewModel.RefreshAsync(waitForPending: true);
                 watch.Restart();
                 var removal = viewModel.RemoveSelectedAsync();
                 await UntilAsync(() => manager.State == TorrentState.Stopping);
                 await viewModel.RefreshAsync().WaitAsync(TimeSpan.FromSeconds(1));
                 await viewModel.RemoveSelectedAsync(); // Repeated clicks must not enqueue more work.
                 await removal.WaitAsync(TimeSpan.FromSeconds(8));
-                Require(watch.Elapsed < TimeSpan.FromSeconds(8) && viewModel.Torrents.Count == 0, "The tracker blocked removal.");
+                Require(watch.Elapsed < TimeSpan.FromSeconds(8) && viewModel.Torrents.Count == 0, $"The tracker blocked removal: elapsed={watch.Elapsed}, count={viewModel.Torrents.Count}, mgrState={manager.State}, progress={manager.PartialProgress:0.0}, rowState={row.State}, rowOp={row.Operation}, rowBusy={row.IsBusy}");
                 Require(File.Exists(downloadedPath), "Removal deleted the payload.");
                 using var disk = File.OpenRead(downloadedPath);
                 for (var piece = 0; piece < manager.Bitfield.Length; piece++)
