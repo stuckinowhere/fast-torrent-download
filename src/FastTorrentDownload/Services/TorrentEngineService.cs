@@ -101,7 +101,21 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public async Task<TorrentAddPreview> PrepareAddAsync(string source, string? destination, CancellationToken cancellationToken = default)
+    public static string SanitizeDisplayName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return string.Empty;
+        }
+
+        return string.Join(' ', name.Split(['\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    public async Task<TorrentAddPreview> PrepareAddAsync(
+        string source,
+        string? destination,
+        CancellationToken cancellationToken = default,
+        Action<string, string?>? onProgress = null)
     {
         ClientEngine engine;
         string safeSource;
@@ -125,7 +139,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             magnet = MagnetLink.Parse(safeSource);
             torrent = TryGetVerifiedCachedTorrent(magnet, out var prefetched)
                 ? prefetched!
-                : await ResolveMagnetMetadataAsync(engine, magnet, cancellationToken);
+                : await ResolveMagnetMetadataAsync(engine, magnet, cancellationToken, onProgress);
         }
         else
         {
@@ -144,9 +158,10 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 : await AddTorrentFromCachedMetadataAsync(engine, magnet, torrent, safeDestination);
             var id = Guid.NewGuid().ToString("N");
             _pending[id] = (manager, safeDestination);
+            var cleanName = SanitizeDisplayName(manager.Name);
             return new TorrentAddPreview(
                 id,
-                string.IsNullOrWhiteSpace(manager.Name) ? "Torrent" : manager.Name,
+                string.IsNullOrWhiteSpace(cleanName) ? "Torrent" : cleanName,
                 manager.Files.Select(file => new TorrentFilePreview(file.Path, file.Length)).ToArray());
         }
         finally
@@ -156,9 +171,12 @@ public sealed class TorrentEngineService : IAsyncDisposable
     }
 
     private static async Task<Torrent> ResolveMagnetMetadataAsync(
-        ClientEngine engine, MagnetLink magnet, CancellationToken cancellationToken)
+        ClientEngine engine, MagnetLink magnet, CancellationToken cancellationToken,
+        Action<string, string?>? onProgress)
     {
         using var raceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        raceCts.CancelAfter(TimeSpan.FromSeconds(60));
+        var progressTask = ReportMetadataProgressAsync(onProgress, raceCts.Token);
         var swarmTask = DownloadMetadataWithTrackerRotationAsync(engine, magnet, raceCts.Token);
         var cacheTask = TryFetchCachedTorrentAsync(magnet, raceCts.Token);
         try
@@ -171,12 +189,29 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
             return await swarmTask;
         }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("No torrent file list was received within 60 seconds. Try again or use a .torrent file.");
+        }
         finally
         {
             raceCts.Cancel();
             // Await cleanup before registering the same hash in the payload engine.
             try { await swarmTask; } catch (OperationCanceledException) { }
             try { await cacheTask; } catch (OperationCanceledException) { }
+            try { await progressTask; } catch (OperationCanceledException) { }
+        }
+    }
+
+    private static async Task ReportMetadataProgressAsync(Action<string, string?>? onProgress, CancellationToken token)
+    {
+        var elapsed = 0;
+        while (!token.IsCancellationRequested)
+        {
+            onProgress?.Invoke($"Fetching torrent file list… ({elapsed}s / 60s)",
+                "Payload files will only download after you confirm the selection.");
+            await Task.Delay(1000, token);
+            elapsed++;
         }
     }
 

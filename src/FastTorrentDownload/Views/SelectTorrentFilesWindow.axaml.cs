@@ -74,6 +74,18 @@ public partial class SelectTorrentFilesWindow : Window
         SelectionSummaryTextBlock.Text = $"{selectedCount} / {Files.Count} selected · {Services.TransferFormatting.Bytes(selectedBytes)}";
     }
 
+    public void UpdateLoadingStatus(string status, string? detail = null)
+    {
+        if (!IsVisible || !LoadingPanel.IsVisible)
+        {
+            return;
+        }
+
+        LoadingStatusTextBlock.Text = status;
+        LoadingDetailTextBlock.Text = detail ?? string.Empty;
+        LoadingDetailTextBlock.IsVisible = !string.IsNullOrWhiteSpace(detail);
+    }
+
     public void FailAndClose()
     {
         if (!IsVisible)

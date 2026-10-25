@@ -106,9 +106,13 @@ public partial class MainWindow : Window
     private async Task AddTorrentAsync(AddTorrentRequest request)
     {
         using var fetch = new CancellationTokenSource();
-        var previewTask = _viewModel.PrepareAddAsync(request.Source, request.Destination, fetch.Token);
         var picker = new SelectTorrentFilesWindow(PendingTorrentName(request.Source)) { Icon = Icon };
         picker.Closed += (_, _) => fetch.Cancel();
+        var previewTask = _viewModel.PrepareAddAsync(
+            request.Source,
+            request.Destination,
+            fetch.Token,
+            (status, detail) => Dispatcher.UIThread.Post(() => picker.UpdateLoadingStatus(status, detail)));
         var dialogTask = picker.ShowDialog<string[]?>(this);
 
         TorrentAddPreview? preview = null;
@@ -165,11 +169,20 @@ public partial class MainWindow : Window
         }
     }
 
-    private static string PendingTorrentName(string source)
+    public static string PendingTorrentName(string source)
     {
         var trimmed = source.Trim();
         if (trimmed.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
         {
+            if (MonoTorrent.MagnetLink.TryParse(trimmed, out var magnet) && !string.IsNullOrWhiteSpace(magnet.Name))
+            {
+                var clean = Services.TorrentEngineService.SanitizeDisplayName(magnet.Name);
+                if (!string.IsNullOrWhiteSpace(clean))
+                {
+                    return clean;
+                }
+            }
+
             return "Magnet link";
         }
 

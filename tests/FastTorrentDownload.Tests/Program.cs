@@ -116,6 +116,8 @@ Check("magnet links with query parameters are accepted as torrent sources", () =
     Require(!TorrentEngineService.TryCacheMagnetTorrentBytes(wrongMagnet, sampleBytes, out _));
     Require(TorrentEngineService.TryCacheMagnetTorrentBytes(matchingMagnet, sampleBytes, out var verified) && verified is not null);
     Require(TorrentEngineService.TryGetVerifiedCachedTorrent(matchingMagnet, out var fromCache) && fromCache?.Name == "fast-magnet-cache.bin");
+    Require(FastTorrentDownload.Views.MainWindow.PendingTorrentName("magnet:?xt=urn:btih:24eb124f02db18c31e3e1fd33d8056e5cb0f054d&dn=Torrentio%0A1080p") == "Torrentio 1080p");
+    Require(FastTorrentDownload.Views.MainWindow.PendingTorrentName("magnet:?xt=urn:btih:24eb124f02db18c31e3e1fd33d8056e5cb0f054d") == "Magnet link");
 });
 
 Check("non-torrent paths are rejected as torrent sources", () =>
