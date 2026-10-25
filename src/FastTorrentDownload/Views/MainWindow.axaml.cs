@@ -1,6 +1,7 @@
 using System.Globalization;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -54,6 +55,30 @@ public partial class MainWindow : Window
 
         _viewModel.IsSettingsOpen = false;
         await AddTorrentAsync(request);
+    }
+
+    protected override async void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.Handled || _viewModel.IsSettingsOpen || e.Source is TextBox || e.Key != Key.V || !e.KeyModifiers.HasFlag(KeyModifiers.Control) || Clipboard is null)
+        {
+            return;
+        }
+
+        var text = (await Clipboard.TryGetTextAsync())?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        var isMagnet = text.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase);
+        if (!isMagnet && !string.Equals(Path.GetExtension(text), ".torrent", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await AddTorrentAsync(new AddTorrentRequest(text, null, StartImmediately: true));
     }
 
     private async void Drop_Handle(object? sender, DragEventArgs e)

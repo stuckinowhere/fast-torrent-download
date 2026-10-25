@@ -8,9 +8,10 @@
   <Grid Margin="24" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="16">
     <StackPanel Spacing="7">
       <TextBlock Text="Magnet link or .torrent file" FontWeight="SemiBold" />
-      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
         <TextBox x:Name="SourceTextBox" PlaceholderText="magnet:?xt=urn:btih:…" />
-        <Button Grid.Column="1" Content="Browse…" Click="BrowseTorrent_Click" MinHeight="44" HorizontalContentAlignment="Left" VerticalContentAlignment="Center" />
+        <Button Grid.Column="1" Content="Paste" Click="PasteSource_Click" MinHeight="44" HorizontalContentAlignment="Left" VerticalContentAlignment="Center" />
+        <Button Grid.Column="2" Content="Browse…" Click="BrowseTorrent_Click" MinHeight="44" HorizontalContentAlignment="Left" VerticalContentAlignment="Center" />
       </Grid>
     </StackPanel>
     <StackPanel Grid.Row="1" Spacing="7">

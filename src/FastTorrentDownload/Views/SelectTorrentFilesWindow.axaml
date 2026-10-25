@@ -11,7 +11,10 @@
     <StackPanel Spacing="4">
       <TextBlock Text="Select files to download" FontSize="20" FontWeight="Bold" />
       <TextBlock Text="Choose the files to keep. Unselected files will not be downloaded." Opacity="0.72" />
-      <TextBlock x:Name="TorrentNameTextBlock" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <TextBlock x:Name="TorrentNameTextBlock" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+        <TextBlock Grid.Column="1" x:Name="SelectionSummaryTextBlock" FontFamily="Consolas" Opacity="0.8" VerticalAlignment="Center" />
+      </Grid>
     </StackPanel>
 
     <StackPanel Grid.Row="1" x:Name="LoadingPanel" Spacing="12" Margin="0,8">

@@ -53,6 +53,7 @@ internal static class UiSmoke
         try
         {
             while (viewModel.Torrents.Count != 2) await Task.Delay(50, timeout.Token);
+            Require(viewModel.TrayToolTipText.Contains("2 torrents"), "Tray tooltip must reflect the active queue summary.");
             Button Button(string name) => main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, name));
             Require(!Button("Resume").IsEnabled && !Button("Remove").IsEnabled, "Actions must be disabled without a selection.");
             var row = viewModel.Torrents.Single(row => row.Name == "Selected files example");
@@ -194,6 +195,8 @@ internal static class UiSmoke
             RequireInside(button, picker, $"File selection: {button.Content}");
         picker.FindControl<Button>("SelectNoneButton")!.RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
         Require(picker.Files.All(file => !file.IsSelected), "Select none must clear the selection.");
+        Require(picker.FindControl<TextBlock>("SelectionSummaryTextBlock")!.Text!.StartsWith("0 / 100 selected", StringComparison.Ordinal),
+            "Selection summary must reflect 0 selected files.");
         picker.FindControl<Button>("AddSelectedButton")!.RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
         await Task.Delay(100);
         Require(!selectionTask.IsCompleted, "An empty selection must keep the dialog open.");
@@ -202,6 +205,8 @@ internal static class UiSmoke
             RequireInside(button, picker, $"File selection with validation: {button.Content}");
         picker.FindControl<Button>("SelectAllButton")!.RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
         Require(picker.Files.All(file => file.IsSelected), "Select all must restore the selection.");
+        Require(picker.FindControl<TextBlock>("SelectionSummaryTextBlock")!.Text!.StartsWith("100 / 100 selected", StringComparison.Ordinal),
+            "Selection summary must reflect all selected files.");
         var list = picker.FindControl<ListBox>("FilesListBox")!;
         list.ScrollIntoView(picker.Files[^1]);
         await Task.Delay(150);

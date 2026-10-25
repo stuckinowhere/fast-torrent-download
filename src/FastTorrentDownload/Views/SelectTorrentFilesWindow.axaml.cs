@@ -11,14 +11,15 @@ public sealed partial class TorrentFileSelectionItem : ObservableObject
     public TorrentFileSelectionItem(TorrentFilePreview file)
     {
         Path = file.Path;
+        Length = file.Length;
         SizeLabel = Services.TransferFormatting.Bytes(file.Length);
     }
 
     public string Path { get; }
+    public long Length { get; }
     public string SizeLabel { get; }
     [ObservableProperty]
     private bool _isSelected = true;
-
 }
 
 public partial class SelectTorrentFilesWindow : Window
@@ -43,15 +44,34 @@ public partial class SelectTorrentFilesWindow : Window
         Files.Clear();
         foreach (var file in preview.Files)
         {
-            Files.Add(new TorrentFileSelectionItem(file));
+            var item = new TorrentFileSelectionItem(file);
+            item.PropertyChanged += (_, _) => UpdateSelectionSummary();
+            Files.Add(item);
         }
 
         TorrentNameTextBlock.Text = preview.Name;
+        UpdateSelectionSummary();
         LoadingPanel.IsVisible = false;
         FilesListBox.IsVisible = true;
         SelectAllButton.IsEnabled = true;
         SelectNoneButton.IsEnabled = true;
         AddSelectedButton.IsEnabled = true;
+    }
+
+    private void UpdateSelectionSummary()
+    {
+        var selectedCount = 0;
+        long selectedBytes = 0;
+        foreach (var file in Files)
+        {
+            if (file.IsSelected)
+            {
+                selectedCount++;
+                selectedBytes += file.Length;
+            }
+        }
+
+        SelectionSummaryTextBlock.Text = $"{selectedCount} / {Files.Count} selected · {Services.TransferFormatting.Bytes(selectedBytes)}";
     }
 
     public void FailAndClose()
@@ -72,6 +92,8 @@ public partial class SelectTorrentFilesWindow : Window
         {
             file.IsSelected = true;
         }
+
+        UpdateSelectionSummary();
     }
 
     private void SelectNone_Click(object? sender, RoutedEventArgs eventArgs)
@@ -80,6 +102,8 @@ public partial class SelectTorrentFilesWindow : Window
         {
             file.IsSelected = false;
         }
+
+        UpdateSelectionSummary();
     }
 
     private void Add_Click(object? sender, RoutedEventArgs eventArgs)

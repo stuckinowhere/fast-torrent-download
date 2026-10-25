@@ -27,7 +27,8 @@ public partial class App : Application
             AppLogger.Init(paths);
             var settings = new SettingsStore(paths);
             var engine = new TorrentEngineService(paths);
-            var mainWindow = new MainWindow(new MainViewModel(engine, settings, new ReleaseUpdateService()));
+            var viewModel = new MainViewModel(engine, settings, new ReleaseUpdateService());
+            var mainWindow = new MainWindow(viewModel);
             WindowIcon? icon = null;
             try
             {
@@ -39,7 +40,14 @@ public partial class App : Application
                 // A window without a custom icon is preferable to failing startup.
             }
 
-            var trayIcon = new TrayIcon { ToolTipText = "fast torrent download" };
+            var trayIcon = new TrayIcon { ToolTipText = viewModel.TrayToolTipText };
+            viewModel.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(MainViewModel.TrayToolTipText))
+                {
+                    trayIcon.ToolTipText = viewModel.TrayToolTipText;
+                }
+            };
             if (icon is not null)
             {
                 trayIcon.Icon = icon;

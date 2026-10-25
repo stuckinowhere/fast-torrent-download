@@ -701,7 +701,11 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 throw;
             }
             await SplitTrackerTiersAsync(pending.Manager);
-            if (startImmediately) await pending.Manager.StartAsync();
+            if (startImmediately)
+            {
+                await pending.Manager.StartAsync();
+                _ = TriggerImmediateAnnouncesAsync(pending.Manager);
+            }
         }
         finally
         {
@@ -733,6 +737,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         _completionErrors.TryRemove(id, out _);
         _pausedHashes.Remove(DescribeInfoHashes(manager.InfoHashes));
         await manager.StartAsync();
+        _ = TriggerImmediateAnnouncesAsync(manager);
     });
 
     public Task PauseAsync(string id) => RunOperationAsync(id, "Stopping…", async manager =>
@@ -1015,13 +1020,23 @@ public sealed class TorrentEngineService : IAsyncDisposable
             known += connected;
             receiving = peers.Count(peer => peer.Monitor.DownloadRate > 0);
             incoming = peers.Count(peer => peer.ConnectionDirection == Direction.Incoming);
-            var pieces = manager.HasMetadata ? new BitField(manager.Bitfield.Length).Or(manager.Bitfield) : null;
-            foreach (var peer in peers)
+            seeders = peers.Count(peer => peer.IsSeeder);
+            if (manager.HasMetadata)
             {
-                if (peer.IsSeeder) seeders++;
-                if (pieces is not null && peer.BitField.Length == pieces.Length) pieces.Or(peer.BitField);
+                if (manager.Bitfield.AllTrue || seeders > 0)
+                {
+                    coverage = 100.0;
+                }
+                else
+                {
+                    var pieces = new BitField(manager.Bitfield.Length).Or(manager.Bitfield);
+                    foreach (var peer in peers)
+                    {
+                        if (peer.BitField.Length == pieces.Length) pieces.Or(peer.BitField);
+                    }
+                    coverage = pieces.PercentComplete;
+                }
             }
-            coverage = pieces?.PercentComplete;
         }
         catch (Exception exception)
         {

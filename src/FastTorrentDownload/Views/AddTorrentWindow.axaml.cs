@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 
@@ -14,6 +15,20 @@ public partial class AddTorrentWindow : Window
         InitializeComponent();
         DestinationTextBox.Text = defaultDestination;
         SourceTextBox.TextChanged += (_, _) => Services.TorrentEngineService.PrefetchMagnetMetadata(SourceTextBox.Text);
+    }
+
+    private async void PasteSource_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        if (Clipboard is null)
+        {
+            return;
+        }
+
+        var text = await Clipboard.TryGetTextAsync();
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            SourceTextBox.Text = text.Trim();
+        }
     }
 
     private async void BrowseTorrent_Click(object? sender, RoutedEventArgs eventArgs)

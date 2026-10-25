@@ -53,6 +53,7 @@ public sealed partial class MainViewModel(
     [ObservableProperty] private string _totalDownloadRate = "↓ 0 B/s";
     [ObservableProperty] private string _totalUploadRate = "↑ 0 B/s";
     [ObservableProperty] private string _queueSummary = "0 torrents";
+    [ObservableProperty] private string _trayToolTipText = "fast torrent download";
 
     public AppSettings Settings => _settings;
 
@@ -323,6 +324,9 @@ public sealed partial class MainViewModel(
             TotalDownloadRate = $"↓ {TorrentRowViewModel.FormatRate(totalDownload)}";
             TotalUploadRate = $"↑ {TorrentRowViewModel.FormatRate(totalUpload)}";
             QueueSummary = snapshots.Count == 1 ? "1 torrent" : $"{snapshots.Count} torrents";
+            TrayToolTipText = snapshots.Count == 0
+                ? "fast torrent download · Idle"
+                : $"fast torrent download · {QueueSummary} · {TotalDownloadRate} {TotalUploadRate}";
             OnPropertyChanged(nameof(HasTorrents));
             NotifySnapshotErrors(snapshots);
             UpdatePortWarning(snapshots);
