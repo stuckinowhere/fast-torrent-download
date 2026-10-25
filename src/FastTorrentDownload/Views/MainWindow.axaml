@@ -36,7 +36,7 @@
       </Grid>
     </Border>
 
-    <Grid Grid.Row="1" RowDefinitions="Auto,*" Margin="28,22,28,14">
+    <Grid x:Name="QueuePageGrid" Grid.Row="1" RowDefinitions="Auto,*" Margin="28,22,28,14" IsVisible="{Binding IsQueueOpen}">
       <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,16">
         <StackPanel Orientation="Horizontal" Spacing="18">
           <TextBlock Text="{Binding QueueSummary}" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -78,6 +78,77 @@
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>
+    </Grid>
+
+    <Grid x:Name="SettingsPageGrid" Grid.Row="1" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="12" Margin="28,22,28,14" IsVisible="{Binding IsSettingsOpen}">
+      <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+        <TextBlock Text="Settings" FontSize="22" FontWeight="Bold" VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="← Back to torrents" Click="CancelSettings_Click" />
+      </Grid>
+
+      <ScrollViewer x:Name="SettingsScrollViewer" Grid.Row="1" Padding="0,0,12,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="22">
+          <StackPanel Spacing="7">
+            <TextBlock Text="Downloads" FontWeight="Bold" FontSize="18" />
+            <TextBlock Text="Default download folder" FontWeight="SemiBold" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+              <TextBox x:Name="DefaultDownloadFolderTextBox" />
+              <Button Grid.Column="1" Content="Choose…" Click="ChooseFolder_Click" MinHeight="44" HorizontalContentAlignment="Left" VerticalContentAlignment="Center" />
+            </Grid>
+            <TextBlock Text="Files remain on disk when you remove an item from the queue." Opacity="0.68" TextWrapping="Wrap" />
+          </StackPanel>
+
+          <StackPanel Spacing="7">
+            <TextBlock Text="Network" FontWeight="Bold" FontSize="18" />
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12" RowDefinitions="Auto,Auto,Auto" RowSpacing="12">
+              <TextBlock Text="Listen port" VerticalAlignment="Center" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <TextBox x:Name="ListenPortTextBox" Width="130" HorizontalAlignment="Left" />
+                <Button Content="Port forwarding guide…" Click="PortGuide_Click" />
+              </StackPanel>
+              <TextBlock Grid.Row="1" Text="Listener IPv4 address" VerticalAlignment="Center" />
+              <TextBox x:Name="ListenAddressTextBox" Grid.Row="1" Grid.Column="1" Width="180" HorizontalAlignment="Left" />
+              <WrapPanel Grid.Row="2" Grid.ColumnSpan="2" Margin="0,8,0,0">
+                <CheckBox x:Name="DhtCheckBox" Content="DHT" Margin="0,0,18,8" />
+                <CheckBox x:Name="PexCheckBox" Content="Peer exchange" Margin="0,0,18,8" />
+                <CheckBox x:Name="LsdCheckBox" Content="Local peer discovery" Margin="0,0,18,8" />
+                <CheckBox x:Name="PortForwardingCheckBox" Content="UPnP / NAT-PMP port forwarding" Margin="0,0,18,8" />
+                <CheckBox x:Name="EncryptionCheckBox" Content="Require encrypted peer connections" Margin="0,0,18,8" />
+              </WrapPanel>
+            </Grid>
+            <TextBlock Text="Listener binding controls incoming connections only; it is not a VPN kill switch or a complete outbound leak-prevention control." Opacity="0.68" TextWrapping="Wrap" />
+          </StackPanel>
+
+          <StackPanel Spacing="7">
+            <TextBlock Text="Bandwidth and completion" FontWeight="Bold" FontSize="18" />
+            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="8">
+              <TextBlock Text="Download limit (KiB/s, 0 = unlimited)" VerticalAlignment="Center" />
+              <TextBox x:Name="DownloadLimitTextBox" Grid.Column="1" Width="150" HorizontalAlignment="Left" />
+              <TextBlock Grid.Row="1" Text="Upload limit (KiB/s, 0 = unlimited)" VerticalAlignment="Center" />
+              <TextBox x:Name="UploadLimitTextBox" Grid.Row="1" Grid.Column="1" Width="150" HorizontalAlignment="Left" />
+            </Grid>
+            <TextBlock Text="Completed downloads leave the queue automatically. Downloaded files are kept, and the completion notification lets you open their folder." Opacity="0.68" TextWrapping="Wrap" />
+          </StackPanel>
+
+          <StackPanel Spacing="7">
+            <TextBlock Text="Appearance" FontWeight="Bold" FontSize="18" />
+            <ComboBox x:Name="ThemeComboBox" Width="160" HorizontalAlignment="Left" SelectedIndex="0">
+              <ComboBoxItem Content="System" />
+              <ComboBoxItem Content="Light" />
+              <ComboBoxItem Content="Dark" />
+            </ComboBox>
+          </StackPanel>
+        </StackPanel>
+      </ScrollViewer>
+
+      <TextBlock Grid.Row="2" x:Name="ValidationErrorTextBlock"
+                 Foreground="{DynamicResource ErrorForegroundBrush}"
+                 TextWrapping="Wrap" IsVisible="False" />
+
+      <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+        <Button Classes="dialog-footer" Content="Cancel" Click="CancelSettings_Click" />
+        <Button Classes="primary dialog-footer" Content="Save settings" Click="SaveSettings_Click" />
+      </StackPanel>
     </Grid>
 
     <Border Grid.Row="2" IsVisible="{Binding HasPortWarning}" BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="0,1,0,0" Padding="28,12">

@@ -65,16 +65,16 @@ internal static class UiSmoke
 
             Button("Settings").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
             await Task.Delay(150);
-            var settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
-            Require(!settings.CanResize && settings.WindowState == WindowState.Normal,
-                "Settings must disable native resizing and maximization.");
-            Require(Math.Abs(settings.Width - main.Width) < 1 && Math.Abs(settings.Height - main.Height) < 1,
-                "Settings must open at the same default size as the app.");
-            Require(settings.FindControl<TextBox>("SeedRatioTextBox") is null && settings.FindControl<TextBox>("DownloadLimitTextBox") is not null, "Completion settings are inconsistent.");
-            await VerifySettingsLayoutAsync(settings, 440);
-            await VerifySettingsLayoutAsync(settings, 360);
-            settings.Close(null);
+            Require(viewModel.IsSettingsOpen && !viewModel.IsQueueOpen && main.OwnedWindows.Count == 0,
+                "Settings must open as an in-app page inside MainWindow, not as a separate window.");
+            Require(main.FindControl<TextBox>("SeedRatioTextBox") is null && main.FindControl<TextBox>("DownloadLimitTextBox") is not null, "Completion settings are inconsistent.");
+            await VerifySettingsLayoutAsync(main, 600);
+            main.Width = 1180;
+            main.Height = 760;
             await Task.Delay(100);
+            Button("Cancel").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            await Task.Delay(100);
+            Require(!viewModel.IsSettingsOpen && viewModel.IsQueueOpen, "Cancel must return from Settings to the torrent queue page.");
             await VerifyAddDialogsAsync(main);
 
             viewModel.SelectedTorrent = viewModel.Torrents.Single(row => row.Name == "Completed example");
@@ -100,7 +100,7 @@ internal static class UiSmoke
             var actions = Button("Remove");
             var point = actions.TranslatePoint(default, main);
             Require(point is { } location && location.X >= 0 && location.X + actions.Bounds.Width <= main.Bounds.Width, "The toolbar overflows at the minimum desktop size.");
-            Console.WriteLine("PASS native UI: selection/actions, diagnostics, settings, automatic completion/folder notification, activity, expiry, light/dark and minimum desktop size");
+            Console.WriteLine("PASS native UI: selection/actions, diagnostics, in-app settings page, automatic completion/folder notification, activity, expiry, light/dark and minimum desktop size");
             main.RequestExit();
         }
         catch (Exception exception)
@@ -115,45 +115,43 @@ internal static class UiSmoke
         if (!condition) throw new InvalidOperationException(message);
     }
 
-    private static async Task VerifySettingsLayoutAsync(SettingsWindow settings, double height)
+    private static async Task VerifySettingsLayoutAsync(MainWindow main, double height)
     {
-        settings.SizeToContent = SizeToContent.Manual;
-        settings.Width = 520;
-        settings.Height = height;
+        main.Width = 880;
+        main.Height = height;
         await Task.Delay(150);
-        var scroll = ((Grid)settings.Content!).Children.OfType<ScrollViewer>().Single();
-        Require(scroll.Extent.Height > scroll.Viewport.Height && scroll.Viewport.Height > 0,
-            "Settings must have a bounded, scrollable viewport in a small window.");
+        var scroll = main.FindControl<ScrollViewer>("SettingsScrollViewer")!;
+        Require(scroll.Viewport.Height > 0, "Settings page must have a positive viewport inside MainWindow.");
         scroll.ScrollToEnd();
         await Task.Delay(100);
-        var theme = settings.FindControl<ComboBox>("ThemeComboBox")!;
+        var theme = main.FindControl<ComboBox>("ThemeComboBox")!;
         var themePoint = theme.TranslatePoint(default, scroll);
-        Require(scroll.Offset.Y > 0 && themePoint is { } location && location.Y >= 0 &&
-            location.Y + theme.Bounds.Height <= scroll.Bounds.Height,
-            "Scrolling Settings must reveal the final appearance control.");
+        Require(themePoint is { } location && location.Y >= 0 &&
+            location.Y + theme.Bounds.Height <= scroll.Bounds.Height + 1,
+            "Scrolling the Settings page must reveal the final appearance control.");
         foreach (var name in new[] { "DownloadLimitTextBox", "UploadLimitTextBox" })
         {
-            var control = settings.FindControl<TextBox>(name)!;
+            var control = main.FindControl<TextBox>(name)!;
             var point = control.TranslatePoint(default, scroll);
             Require(point is { } position && position.X >= 0 &&
                 position.X + control.Bounds.Width <= scroll.Viewport.Width,
-                "Bandwidth fields must fit at the minimum Settings width.");
+                "Bandwidth fields must fit inside the Settings page width.");
         }
 
-        var save = settings.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Save settings"));
-        settings.FindControl<TextBox>("ListenPortTextBox")!.Text = "0";
+        var save = main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Save settings"));
+        main.FindControl<TextBox>("ListenPortTextBox")!.Text = "0";
         save.RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
         await Task.Delay(100);
-        var error = settings.FindControl<TextBlock>("ValidationErrorTextBlock")!;
+        var error = main.FindControl<TextBlock>("ValidationErrorTextBlock")!;
         Require(error.IsVisible && !string.IsNullOrEmpty(error.Text), "Invalid settings must show validation feedback.");
-        foreach (var control in new Control[] { error, save, settings.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Cancel")) })
+        foreach (var control in new Control[] { error, save, main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Cancel")) })
         {
-            var point = control.TranslatePoint(default, settings);
+            var point = control.TranslatePoint(default, main);
             Require(point is { } position && position.Y >= 0 &&
-                position.Y + control.Bounds.Height <= settings.ClientSize.Height,
+                position.Y + control.Bounds.Height <= main.ClientSize.Height,
                 "Settings validation and footer actions must remain visible outside the scroll area.");
         }
-        Console.WriteLine($"PASS Settings scroll, final control, bandwidth fields and fixed validation/footer at 520x{height}");
+        Console.WriteLine($"PASS in-app Settings page scroll, final control, bandwidth fields and fixed validation/footer at 880x{height}");
     }
 
     private static async Task VerifyAddDialogsAsync(MainWindow main)

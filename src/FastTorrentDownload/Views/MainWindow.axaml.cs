@@ -1,3 +1,4 @@
+using System.Globalization;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -51,6 +52,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        _viewModel.IsSettingsOpen = false;
         await AddTorrentAsync(request);
     }
 
@@ -72,6 +74,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        _viewModel.IsSettingsOpen = false;
         await AddTorrentAsync(new AddTorrentRequest(trimmed, null, StartImmediately: true));
     }
 
@@ -196,6 +199,10 @@ public partial class MainWindow : Window
     {
         var next = Avalonia.Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark ? "Light" : "Dark";
         _viewModel.SetTheme(next);
+        if (_viewModel.IsSettingsOpen)
+        {
+            ThemeComboBox.SelectedIndex = next == "Light" ? 1 : 2;
+        }
     }
 
     private async void Update_Click(object? sender, RoutedEventArgs eventArgs) =>
@@ -221,21 +228,116 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void Settings_Click(object? sender, RoutedEventArgs eventArgs)
+    private void Settings_Click(object? sender, RoutedEventArgs eventArgs)
     {
-        var dialog = new SettingsWindow(_viewModel.Settings) { Icon = Icon };
-        var settings = await dialog.ShowDialog<Models.AppSettings?>(this);
-        if (settings is not null)
+        if (_viewModel.IsSettingsOpen)
         {
-            try
-            {
-                await _viewModel.SaveSettingsAsync(settings);
-            }
-            catch (Exception exception)
-            {
-                _viewModel.NotifyActionFailure($"Could not save settings: {exception.Message}");
-            }
+            _viewModel.IsSettingsOpen = false;
+            return;
         }
+
+        LoadSettingsEditor(_viewModel.Settings);
+        _viewModel.IsSettingsOpen = true;
+    }
+
+    private void LoadSettingsEditor(AppSettings settings)
+    {
+        var copy = settings.Copy();
+        DefaultDownloadFolderTextBox.Text = copy.DefaultDownloadFolder;
+        ListenPortTextBox.Text = copy.ListenPort.ToString(CultureInfo.InvariantCulture);
+        ListenAddressTextBox.Text = copy.ListenAddress;
+        DhtCheckBox.IsChecked = copy.EnableDht;
+        PexCheckBox.IsChecked = copy.EnablePeerExchange;
+        LsdCheckBox.IsChecked = copy.EnableLocalPeerDiscovery;
+        PortForwardingCheckBox.IsChecked = copy.EnablePortForwarding;
+        EncryptionCheckBox.IsChecked = copy.RequireEncryptedPeerConnections;
+        DownloadLimitTextBox.Text = copy.MaximumDownloadKiBPerSecond.ToString(CultureInfo.InvariantCulture);
+        UploadLimitTextBox.Text = copy.MaximumUploadKiBPerSecond.ToString(CultureInfo.InvariantCulture);
+        ThemeComboBox.SelectedIndex = copy.Theme switch { "Light" => 1, "Dark" => 2, _ => 0 };
+        ValidationErrorTextBlock.Text = string.Empty;
+        ValidationErrorTextBlock.IsVisible = false;
+        SettingsScrollViewer.Offset = default;
+    }
+
+    private async void ChooseFolder_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Choose default download folder",
+            AllowMultiple = false
+        });
+
+        if (folders.Count > 0)
+        {
+            DefaultDownloadFolderTextBox.Text = folders[0].TryGetLocalPath() ?? folders[0].Path.LocalPath;
+        }
+    }
+
+    private void CancelSettings_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        ValidationErrorTextBlock.Text = string.Empty;
+        ValidationErrorTextBlock.IsVisible = false;
+        _viewModel.IsSettingsOpen = false;
+    }
+
+    private async void SaveSettings_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        if (!int.TryParse(ListenPortTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var listenPort) ||
+            listenPort is < 1024 or > 65535)
+        {
+            ShowSettingsValidationError("Port must be between 1024 and 65535.");
+            return;
+        }
+
+        try
+        {
+            Services.NetworkBinding.ResolveListenAddress(ListenAddressTextBox.Text);
+        }
+        catch (ArgumentException exception)
+        {
+            ShowSettingsValidationError(exception.Message);
+            return;
+        }
+
+        if (!int.TryParse(DownloadLimitTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var downloadLimit) || downloadLimit < 0 ||
+            !int.TryParse(UploadLimitTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var uploadLimit) || uploadLimit < 0)
+        {
+            ShowSettingsValidationError("Use non-negative numeric limits.");
+            return;
+        }
+
+        var updated = _viewModel.Settings.Copy();
+        updated.DefaultDownloadFolder = DefaultDownloadFolderTextBox.Text ?? string.Empty;
+        updated.ListenPort = listenPort;
+        updated.ListenAddress = ListenAddressTextBox.Text?.Trim() ?? string.Empty;
+        updated.EnableDht = DhtCheckBox.IsChecked == true;
+        updated.EnablePeerExchange = PexCheckBox.IsChecked == true;
+        updated.EnableLocalPeerDiscovery = LsdCheckBox.IsChecked == true;
+        updated.EnablePortForwarding = PortForwardingCheckBox.IsChecked == true;
+        updated.RequireEncryptedPeerConnections = EncryptionCheckBox.IsChecked == true;
+        updated.MaximumDownloadKiBPerSecond = downloadLimit;
+        updated.MaximumUploadKiBPerSecond = uploadLimit;
+        updated.Theme = ThemeComboBox.SelectedIndex switch { 1 => "Light", 2 => "Dark", _ => "System" };
+        updated.Normalize();
+
+        try
+        {
+            await _viewModel.SaveSettingsAsync(updated);
+            ValidationErrorTextBlock.Text = string.Empty;
+            ValidationErrorTextBlock.IsVisible = false;
+            _viewModel.IsSettingsOpen = false;
+        }
+        catch (Exception exception)
+        {
+            ShowSettingsValidationError($"Could not save settings: {exception.Message}");
+            _viewModel.NotifyActionFailure($"Could not save settings: {exception.Message}");
+        }
+    }
+
+    private void ShowSettingsValidationError(string message)
+    {
+        ValidationErrorTextBlock.Text = message;
+        ValidationErrorTextBlock.IsVisible = true;
     }
 
     private async Task RunActionAsync(Func<Task> action)

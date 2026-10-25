@@ -30,9 +30,12 @@ public sealed partial class MainViewModel(
     [ObservableProperty] private ActivityEntry? _notification;
     [ObservableProperty] private bool _hasPortWarning;
     [ObservableProperty] private string _portWarningMessage = string.Empty;
+    [ObservableProperty] private bool _isSettingsOpen;
+    public bool IsQueueOpen => !IsSettingsOpen;
     public bool HasNotification => Notification is not null;
     public bool CanOpenNotificationFolder => Notification?.Destination is not null;
     public bool HasTorrents => Torrents.Count > 0;
+    partial void OnIsSettingsOpenChanged(bool value) => OnPropertyChanged(nameof(IsQueueOpen));
     partial void OnNotificationChanged(ActivityEntry? value)
     {
         OnPropertyChanged(nameof(HasNotification));
@@ -222,6 +225,7 @@ public sealed partial class MainViewModel(
         _settings = updatedSettings.Copy();
         ApplyTheme(_settings.Theme);
         StatusMessage = "Settings saved.";
+        ShowNotification(StatusMessage, null);
     }
 
     public async Task SaveExitPromptPreferenceAsync(bool shouldConfirm)
