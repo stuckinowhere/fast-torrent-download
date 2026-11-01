@@ -111,6 +111,9 @@ internal static class UiSmoke
             var point = actions.TranslatePoint(default, main);
             Require(point is { } location && location.X >= 0 && location.X + actions.Bounds.Width <= main.Bounds.Width, "The row actions overflow at the minimum desktop size.");
             Console.WriteLine("PASS native UI: selection/actions, diagnostics, in-app settings page, automatic completion/folder notification, activity, expiry, light/dark and minimum desktop size");
+            main.Width = 1180;
+            main.Height = 760;
+            await VerifyEndToEndAsync(main, viewModel, _fixtureRoot!, timeout.Token);
             main.RequestExit();
         }
         catch (Exception exception)
@@ -123,6 +126,109 @@ internal static class UiSmoke
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static string? _fixtureRoot;
+
+    // Exercises the real App (engine, pipe listener, dialogs) with the isolated fixture:
+    // the paths a user actually clicks, not the view-model shortcuts.
+    private static async Task VerifyEndToEndAsync(MainWindow main, MainViewModel viewModel, string root, CancellationToken token)
+    {
+        var click = new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent);
+        Button RowButton(TorrentRowViewModel target, string name) => main.GetVisualDescendants().OfType<Button>()
+            .Single(button => Equals(button.Content, name) && ReferenceEquals(button.DataContext, target));
+        async Task UntilAsync(Func<bool> condition, string message)
+        {
+            using var step = CancellationTokenSource.CreateLinkedTokenSource(token);
+            step.CancelAfter(TimeSpan.FromSeconds(20));
+            try { while (!condition()) await Task.Delay(50, step.Token); }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested) { throw new InvalidOperationException(message); }
+        }
+        async Task<SelectTorrentFilesWindow> PickerAsync()
+        {
+            SelectTorrentFilesWindow? picker = null;
+            await UntilAsync(() => (picker = main.OwnedWindows.OfType<SelectTorrentFilesWindow>().FirstOrDefault()) is not null, "The file picker did not open.");
+            await UntilAsync(() => picker!.FindControl<Button>("AddSelectedButton")!.IsEnabled, "The file picker never finished loading.");
+            return picker!;
+        }
+
+        // 1. A second launch forwards a .torrent over the real named pipe; the running window adds it.
+        var forwarded = Path.Combine(root, "Forwarded example.torrent");
+        Require(SingleInstanceChannel.TryForward([forwarded]), "Forwarding to the running instance failed.");
+        var picker = await PickerAsync();
+        picker.FindControl<Button>("AddSelectedButton")!.RaiseEvent(click);
+        await UntilAsync(() => viewModel.Torrents.Count == 2, "The forwarded torrent was not added.");
+        var added = viewModel.Torrents.Single(row => row.Name == "Forwarded example");
+        await UntilAsync(() => added.State is "Downloading" or "Hashing", $"The forwarded torrent did not start: {added.State}.");
+
+        // 2. Files… on a running torrent drops a file and persists the change.
+        RowButton(added, "Files…").RaiseEvent(click);
+        picker = await PickerAsync();
+        Require(picker.Title == "Change downloaded files" && picker.Files.Count == 2 && picker.Files.All(file => file.IsSelected), "Edit mode must preload the current selection.");
+        picker.Files.Single(file => file.Path == "second.bin").IsSelected = false;
+        picker.FindControl<Button>("AddSelectedButton")!.RaiseEvent(click);
+        // The dialog closes before the row reports "Updating…", so poll the engine rather than the busy flag.
+        var applied = false;
+        await UntilAsync(() =>
+        {
+            var files = viewModel.GetFilesAsync(added.Id).GetAwaiter().GetResult();
+            applied = !files.Files.Single(file => file.Path == "second.bin").Selected && files.Files.Single(file => file.Path == "first.bin").Selected;
+            return applied || viewModel.StatusMessage.StartsWith("Could not", StringComparison.Ordinal);
+        }, "The file update did not finish.");
+        Require(applied, $"The new file selection was not applied: {viewModel.StatusMessage}");
+        await UntilAsync(() => !added.IsBusy, "The row stayed busy after the file update.");
+
+        // 3. Maximum active downloads = 1 through the Settings page: the next Resume waits as Queued.
+        main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Settings")).RaiseEvent(click);
+        await UntilAsync(() => viewModel.IsSettingsOpen, "Settings did not open.");
+        main.FindControl<TextBox>("MaxActiveTextBox")!.Text = "1";
+        main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Save settings")).RaiseEvent(click);
+        await UntilAsync(() => !viewModel.IsSettingsOpen && viewModel.Settings.MaximumActiveDownloads == 1, "The active-download limit was not saved.");
+        var partial = viewModel.Torrents.Single(row => row.Name == "Selected files example");
+        RowButton(partial, "Resume").RaiseEvent(click);
+        await UntilAsync(() => partial.State == "Queued", $"The second torrent should wait as Queued: {partial.State}.");
+        Require(RowButton(partial, "Pause").IsVisible && !RowButton(partial, "Resume").IsVisible, "A queued row must offer Pause.");
+        RowButton(added, "Pause").RaiseEvent(click);
+        await UntilAsync(() => added.State == "Stopped" && !added.IsBusy, "Pause did not stop the active torrent.");
+        await UntilAsync(() => partial.State is "Downloading" or "Hashing", $"The queued torrent was not promoted: {partial.State}.");
+
+        // 4. Move… relocates real payload data of a running torrent and keeps it running.
+        var oldFile = Directory.EnumerateFiles(root, "first.bin", SearchOption.AllDirectories).Single(file => file.Contains("Selected files example"));
+        var moved = Path.Combine(root, "moved");
+        await viewModel.MoveTorrentAsync(partial.Id, moved);
+        await UntilAsync(() => partial.Destination == moved && !partial.IsBusy, "Move did not update the row destination.");
+        var newFile = Directory.EnumerateFiles(moved, "first.bin", SearchOption.AllDirectories).Single();
+        Require(!File.Exists(oldFile) && new FileInfo(newFile).Length == 16_384, "Move did not relocate the payload.");
+        await UntilAsync(() => partial.State is "Downloading" or "Hashing", $"The moved torrent did not resume: {partial.State}.");
+
+        // 5. Closing the window keeps the app in the tray; the tray command brings it back.
+        main.Close();
+        await UntilAsync(() => !main.IsVisible, "Close must hide the window when CloseToTray is on.");
+        Require(viewModel.StatusMessage.Contains("background"), "Hiding must explain that downloads keep running.");
+        main.Show();
+        await UntilAsync(() => main.IsVisible, "Show must bring the window back.");
+
+        // 6. Start-with-Windows writes and removes the per-user Run entry; the prior value is restored.
+        using var run = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
+        var before = run?.GetValue("FastTorrentDownload") as string;
+        try
+        {
+            StartupRegistration.Apply(true);
+            var value = run?.GetValue("FastTorrentDownload") as string;
+            Require(value is not null && value.Contains(Environment.ProcessPath!) && value.EndsWith(StartupRegistration.MinimizedArgument), "The Run entry was not written.");
+            StartupRegistration.Apply(false);
+            Require(run?.GetValue("FastTorrentDownload") is null, "The Run entry was not removed.");
+        }
+        finally
+        {
+            if (before is not null)
+            {
+                using var writable = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+                writable?.SetValue("FastTorrentDownload", before);
+            }
+        }
+
+        Console.WriteLine("PASS end-to-end: pipe forwarding adds a torrent, Files… edits a running torrent, active-download queue promotes, Move relocates data, close-to-tray and Run entry round-trip");
     }
 
     private static async Task VerifySettingsLayoutAsync(MainWindow main, double height)
@@ -251,6 +357,7 @@ internal static class UiSmoke
         var root = Path.Combine(Path.GetTempPath(), "fast-torrent-ui-" + Guid.NewGuid().ToString("N"));
         var paths = new AppPaths(root);
         paths.EnsureDirectories();
+        _fixtureRoot = root;
         using var port = new TcpListener(IPAddress.Loopback, 0);
         port.Start();
         var listenPort = ((IPEndPoint)port.LocalEndpoint).Port;
@@ -270,7 +377,7 @@ internal static class UiSmoke
         typeof(TorrentEngineService).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(service, engine);
         var data = new byte[16_384];
         Array.Fill(data, (byte)7);
-        foreach (var name in new[] { "Selected files example", "Completed example" })
+        foreach (var name in new[] { "Selected files example", "Completed example", "Forwarded example" })
         {
             var encoded = new BEncodedDictionary
             {
@@ -287,6 +394,7 @@ internal static class UiSmoke
             };
             var source = Path.Combine(root, name + ".torrent");
             await File.WriteAllBytesAsync(source, encoded.Encode());
+            if (name == "Forwarded example") continue; // Added later through the second-instance pipe.
             var preview = await service.PrepareAddAsync(source, root);
             await service.CommitAddAsync(preview, ["first.bin", "second.bin"], startImmediately: false);
             var manager = engine.Torrents.Single(manager => manager.Name == name);

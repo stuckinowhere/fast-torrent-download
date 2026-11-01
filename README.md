@@ -56,7 +56,7 @@ Use `--ui-smoke` instead for manual inspection. Old settings containing a seedin
 On Windows with Inno Setup installed, run:
 
 ```powershell
-.\\scripts\\Publish.ps1 -Version 0.5.1
+.\\scripts\\Publish.ps1 -Version 0.6.0
 ```
 
 It creates a self-contained Windows x64 portable ZIP, an SHA-256 checksum file, and a per-user installer under `artifacts\\`. The installer is intentionally unsigned: publish the checksum beside it and expect Microsoft SmartScreen to show a reputation warning for early releases. Only the installer registers the `magnet:` protocol and `.torrent` association (both optional tasks, per-user, removed on uninstall); the portable ZIP does not touch the registry.
