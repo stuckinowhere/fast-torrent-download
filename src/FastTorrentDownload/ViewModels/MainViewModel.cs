@@ -57,14 +57,7 @@ public sealed partial class MainViewModel(
 
     public AppSettings Settings => _settings;
 
-    public string AppVersionLabel
-    {
-        get
-        {
-            var version = typeof(MainViewModel).Assembly.GetName().Version ?? new Version(0, 1, 0);
-            return $"v{version.Major}.{version.Minor}.{version.Build}";
-        }
-    }
+    public string AppVersionLabel => $"v{AppInfo.Version}";
 
     public async Task InitializeAsync()
     {
@@ -107,7 +100,11 @@ public sealed partial class MainViewModel(
 
     public Task CancelAddAsync(string id) => _engine.CancelAddAsync(id);
 
-    public async Task StartSelectedAsync()
+    public Task StartSelectedAsync() => WithSelectedAsync(StartTorrentAsync);
+    public Task RecheckSelectedAsync() => WithSelectedAsync(RecheckTorrentAsync);
+    public Task RemoveSelectedAsync() => WithSelectedAsync(RemoveTorrentAsync);
+
+    private async Task WithSelectedAsync(Func<string, Task> action)
     {
         if (SelectedTorrent is null)
         {
@@ -115,40 +112,41 @@ public sealed partial class MainViewModel(
             return;
         }
 
-        var row = SelectedTorrent;
-        await RunRowActionAsync(row, "Starting…", () => _engine.StartAsync(row.Id), $"Starting {row.Name}…", $"Started {row.Name}.");
+        await action(SelectedTorrent.Id);
     }
 
-    public async Task PauseTorrentAsync(string id)
+    public Task StartTorrentAsync(string id) => RunRowActionAsync(id, "Starting…", () => _engine.StartAsync(id),
+        name => $"Starting {name}…", name => $"Started {name}.");
+
+    public Task PauseTorrentAsync(string id) => RunRowActionAsync(id, "Stopping…", () => _engine.PauseAsync(id),
+        name => $"Stopping {name}…", name => $"Paused {name}.");
+
+    public Task RecheckTorrentAsync(string id) => RunRowActionAsync(id, "Rechecking…", () => _engine.RecheckAsync(id),
+        name => $"Rechecking {name}…", name => $"Recheck started for {name}.");
+
+    public Task RemoveTorrentAsync(string id) => RunRowActionAsync(id, "Stopping…", () => _engine.RemoveAsync(id),
+        name => $"Stopping {name} before removing…", name => $"Removed {name}; downloaded files were kept.");
+
+    public Task<TorrentAddPreview> GetFilesAsync(string id) => _engine.GetFilesAsync(id);
+
+    public Task ChangeFilesAsync(string id, IReadOnlyCollection<string> selectedFiles) =>
+        RunRowActionAsync(id, "Updating…", () => _engine.SetSelectedFilesAsync(id, selectedFiles),
+            name => $"Updating files for {name}…", name => $"Updated the file selection for {name}.");
+
+    public Task MoveTorrentAsync(string id, string destination) =>
+        RunRowActionAsync(id, "Moving…", () => _engine.MoveAsync(id, destination),
+            name => $"Moving {name}…", name => $"Moved {name} to its new folder.");
+
+    private async Task RunRowActionAsync(string id, string operation, Func<Task> action, Func<string, string> pending, Func<string, string> success)
     {
         var row = Torrents.FirstOrDefault(current => current.Id == id);
-        if (row is not null)
-            await RunRowActionAsync(row, "Stopping…", () => _engine.PauseAsync(id), $"Stopping {row.Name}…", $"Paused {row.Name}.");
-    }
-
-    public async Task RecheckSelectedAsync()
-    {
-        if (SelectedTorrent is null)
+        if (row is null)
         {
-            StatusMessage = "Select a torrent first.";
+            StatusMessage = "That torrent is no longer in the queue.";
             return;
         }
 
-        var row = SelectedTorrent;
-        await RunRowActionAsync(row, "Rechecking…", () => _engine.RecheckAsync(row.Id), $"Rechecking {row.Name}…", $"Recheck started for {row.Name}.");
-    }
-
-    public async Task RemoveSelectedAsync()
-    {
-        if (SelectedTorrent is null)
-        {
-            StatusMessage = "Select a torrent first.";
-            return;
-        }
-
-        var row = SelectedTorrent;
-        await RunRowActionAsync(row, "Stopping…", () => _engine.RemoveAsync(row.Id),
-            $"Stopping {row.Name} before removing…", $"Removed {row.Name}; downloaded files were kept.");
+        await RunRowActionAsync(row, operation, action, pending(row.Name), success(row.Name));
     }
 
     private async Task RunRowActionAsync(TorrentRowViewModel row, string operation, Func<Task> action, string pending, string success)
@@ -172,9 +170,11 @@ public sealed partial class MainViewModel(
         }
     }
 
-    public void OpenSelectedFolder()
+    public void OpenSelectedFolder() => OpenTorrentFolder(SelectedTorrent);
+
+    public void OpenTorrentFolder(TorrentRowViewModel? row)
     {
-        var folder = ResolveFolderToOpen(SelectedTorrent, _settings);
+        var folder = ResolveFolderToOpen(row, _settings);
         if (folder is null)
         {
             StatusMessage = "That download folder is not available.";
@@ -182,7 +182,7 @@ public sealed partial class MainViewModel(
         }
 
         OpenFolder(folder);
-        if (SelectedTorrent is null) StatusMessage = "Opened the default download folder.";
+        if (row is null) StatusMessage = "Opened the default download folder.";
     }
 
     public void OpenNotificationFolder()
@@ -227,9 +227,22 @@ public sealed partial class MainViewModel(
         updatedSettings.PausedInfoHashes = new HashSet<string>(_engine.PausedInfoHashes, StringComparer.OrdinalIgnoreCase);
         await _settingsStore.SaveAsync(updatedSettings);
         await _engine.ApplySettingsAsync(updatedSettings);
+        var startupChanged = _settings.StartWithWindows != updatedSettings.StartWithWindows;
         _settings = updatedSettings.Copy();
         ApplyTheme(_settings.Theme);
         StatusMessage = "Settings saved.";
+        if (startupChanged)
+        {
+            try
+            {
+                StartupRegistration.Apply(_settings.StartWithWindows);
+            }
+            catch (Exception exception)
+            {
+                StatusMessage = $"Settings saved, but the startup entry could not be updated: {exception.Message}";
+            }
+        }
+
         ShowNotification(StatusMessage, null);
     }
 

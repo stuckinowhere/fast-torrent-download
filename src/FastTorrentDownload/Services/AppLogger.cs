@@ -2,6 +2,7 @@ namespace FastTorrentDownload.Services;
 
 public static class AppLogger
 {
+    private const long MaxLogBytes = 5 * 1024 * 1024;
     private static readonly object Sync = new();
     private static string? _logFile;
 
@@ -31,6 +32,7 @@ public static class AppLogger
         {
             lock (Sync)
             {
+                RotateIfNeeded(file);
                 File.AppendAllText(file, $"[{DateTime.UtcNow:O}] {message}{Environment.NewLine}");
             }
         }
@@ -42,4 +44,16 @@ public static class AppLogger
 
     public static void LogException(string context, Exception exception) =>
         Log($"{context}: {exception}");
+
+    // Keeps one previous generation so a long-running install never fills the disk.
+    private static void RotateIfNeeded(string file)
+    {
+        var info = new FileInfo(file);
+        if (!info.Exists || info.Length < MaxLogBytes)
+        {
+            return;
+        }
+
+        File.Move(file, file + ".1", overwrite: true);
+    }
 }

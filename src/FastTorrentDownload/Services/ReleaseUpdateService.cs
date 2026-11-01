@@ -106,7 +106,7 @@ public sealed class ReleaseUpdateService
             BaseAddress = new Uri("https://api.github.com/"),
             Timeout = TimeSpan.FromSeconds(10)
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("fast-torrent-download/0.1");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd($"fast-torrent-download/{AppInfo.Version}");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return client;
     }

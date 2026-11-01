@@ -223,25 +223,35 @@ Check("show folder falls back to the default download folder when nothing is sel
     Require(MainViewModel.ResolveFolderToOpen(selected, settings) == Path.GetTempPath());
 });
 
-Check("tracker prune drops proven-empty trackers but never strands the torrent", () =>
+Check("active-download limit queues extra torrents and treats transfer states as active", () =>
 {
-    var empty = new Uri("udp://empty.example.com:1337/announce");
-    var full = new Uri("udp://full.example.com:1337/announce");
-    var unknown = new Uri("udp://unknown.example.com:1337/announce");
-    Require(TorrentEngineService.SelectTrackersToPrune([(empty, true, 0, 0), (full, true, 0, 5)]).SequenceEqual([empty]));
-    Require(TorrentEngineService.SelectTrackersToPrune([(empty, true, 0, 0), (full, true, 0, 0)]).Count == 0);
-    Require(TorrentEngineService.SelectTrackersToPrune([(unknown, false, 0, 0), (empty, true, 0, 0)]).SequenceEqual([empty]));
-    Require(TorrentEngineService.SelectTrackersToPrune([(unknown, false, 0, 0)]).Count == 0);
-    Require(TorrentEngineService.SelectTrackersToPrune([]).Count == 0);
+    Require(!TorrentEngineService.ShouldQueue(0, 50));
+    Require(!TorrentEngineService.ShouldQueue(2, 1));
+    Require(TorrentEngineService.ShouldQueue(2, 2));
+    Require(TorrentEngineService.IsActiveState(TorrentState.Downloading) && TorrentEngineService.IsActiveState(TorrentState.Hashing) && TorrentEngineService.IsActiveState(TorrentState.Metadata));
+    Require(!TorrentEngineService.IsActiveState(TorrentState.Stopped) && !TorrentEngineService.IsActiveState(TorrentState.Error) && !TorrentEngineService.IsActiveState(TorrentState.Paused));
+    var settings = new AppSettings { MaximumActiveDownloads = -3 };
+    settings.Normalize();
+    Require(settings.MaximumActiveDownloads == 0 && !settings.UsePublicMetadataCaches && settings.CloseToTray && !settings.StartWithWindows);
+    var queued = new TorrentRowViewModel(Snapshot(10, 0, 0, state: "Queued"));
+    Require(queued.CanPause && !queued.CanResume && queued.CanAct);
+    var stopped = new TorrentRowViewModel(Snapshot(10, 0, 0, state: "Stopped"));
+    Require(stopped.CanResume && !stopped.CanPause);
+    var downloading = new TorrentRowViewModel(Snapshot(10, 0, 0, state: "Downloading"));
+    Require(downloading.CanPause && !downloading.CanResume);
+    downloading.Operation = "Moving…";
+    Require(!downloading.CanPause && !downloading.CanResume && downloading.IsBusy);
 });
 
-Check("tracker rotation keeps a lone connected peer instead of restarting and starved downloads reannounce periodically", () =>
+Check("second-instance sources are filtered to magnets and torrent files", () =>
 {
-    Require(TorrentEngineService.ShouldRotateTrackerCoverage(0, 0));
-    Require(TorrentEngineService.ShouldRotateTrackerCoverage(1, 0));
-    Require(!TorrentEngineService.ShouldRotateTrackerCoverage(1, 1));
-    Require(!TorrentEngineService.ShouldRotateTrackerCoverage(2, 0));
-    Require(!TorrentEngineService.ShouldRotateTrackerCoverage(0, 1));
+    var sources = SingleInstanceChannel.ExtractSources(["--minimized", " magnet:?xt=urn:btih:abc ", @"C:\x\file.torrent", "notes.txt", ""]);
+    Require(sources.SequenceEqual(["magnet:?xt=urn:btih:abc", @"C:\x\file.torrent"]));
+    Require(!SingleInstanceChannel.TryForward([]));
+});
+
+Check("starved downloads reannounce periodically", () =>
+{
     Require(TorrentEngineService.ShouldReannounceStarvedTorrent(TorrentState.Downloading, 20, TimeSpan.FromMinutes(3)));
     Require(!TorrentEngineService.ShouldReannounceStarvedTorrent(TorrentState.Downloading, 60, TimeSpan.FromMinutes(3)));
     Require(!TorrentEngineService.ShouldReannounceStarvedTorrent(TorrentState.Downloading, 20, TimeSpan.FromMinutes(1)));
@@ -304,7 +314,9 @@ Check("pause intents copy and normalize without aliasing", () =>
 });
 
 await CheckRestoredDestinationAsync();
-passed++;
+await CheckSingleInstanceForwardingAsync();
+await CheckFileSelectionDuplicateAndQueueAsync();
+passed += 3;
 await CheckCompletedRemovalAsync(selectedOnly: true);
 await CheckCompletedRemovalAsync(selectedOnly: false);
 await CheckCompletedRemovalAsync(selectedOnly: true, manualRemoval: true);
@@ -505,6 +517,114 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
     finally
     {
         Directory.Delete(root, recursive: true);
+    }
+}
+
+static async Task CheckSingleInstanceForwardingAsync()
+{
+    using var channel = new SingleInstanceChannel();
+    var received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    channel.Start(source => received.TrySetResult(source));
+    await Task.Delay(200); // Let the pipe server come up before the client connects.
+    Require(SingleInstanceChannel.TryForward(["magnet:?xt=urn:btih:792b9fa5793e46c51db29f59c6a9037cf20492f4&dn=Forwarded"]));
+    var source = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    Require(source.StartsWith("magnet:?xt=urn:btih:792b9fa5", StringComparison.Ordinal));
+    Console.WriteLine("PASS a second launch forwards its magnet link to the running instance");
+}
+
+static async Task CheckFileSelectionDuplicateAndQueueAsync()
+{
+    var root = Path.Combine(Path.GetTempPath(), "fast-torrent-queue-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        var data = new byte[16_384];
+        Array.Fill(data, (byte)9);
+        var hash = SHA1.HashData(data);
+        BEncodedDictionary Torrent(string name) => new()
+        {
+            ["info"] = new BEncodedDictionary
+            {
+                ["name"] = new BEncodedString(name),
+                ["piece length"] = new BEncodedNumber(data.Length),
+                ["pieces"] = new BEncodedString(hash.Concat(hash).ToArray()),
+                ["files"] = new BEncodedList
+                {
+                    new BEncodedDictionary { ["length"] = new BEncodedNumber(data.Length), ["path"] = new BEncodedList { new BEncodedString("keep.bin") } },
+                    new BEncodedDictionary { ["length"] = new BEncodedNumber(data.Length), ["path"] = new BEncodedList { new BEncodedString("drop.bin") } }
+                }
+            }
+        };
+        var first = Path.Combine(root, "first.torrent");
+        var second = Path.Combine(root, "second.torrent");
+        await File.WriteAllBytesAsync(first, Torrent("queue-first").Encode());
+        await File.WriteAllBytesAsync(second, Torrent("queue-second").Encode());
+        using var engine = new ClientEngine(new EngineSettingsBuilder
+        {
+            CacheDirectory = Path.Combine(root, "cache"), DhtEndPoint = null, AllowPortForwarding = false,
+            AllowLocalPeerDiscovery = false, ListenEndPoints = new Dictionary<string, IPEndPoint>()
+        }.ToSettings());
+        var paths = new AppPaths(Path.Combine(root, "app-state"));
+        paths.EnsureDirectories();
+        var service = new TorrentEngineService(paths);
+        typeof(TorrentEngineService).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(service, engine);
+        typeof(TorrentEngineService).GetField("_settings", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(service, new AppSettings { DefaultDownloadFolder = root, MaximumActiveDownloads = 1 });
+
+        // The folder appears only once the add is confirmed.
+        var destination = Path.Combine(root, "payload");
+        var previewFirst = await service.PrepareAddAsync(first, destination);
+        Require(!Directory.Exists(destination));
+        try
+        {
+            await service.PrepareAddAsync(first, destination);
+            throw new InvalidOperationException("Expected a duplicate add to be rejected.");
+        }
+        catch (InvalidOperationException exception) when (exception.Message.Contains("already in the queue"))
+        {
+        }
+        await service.CommitAddAsync(previewFirst, ["keep.bin", "drop.bin"], startImmediately: false);
+        Require(Directory.Exists(destination));
+
+        // Reselecting files after the add changes priorities and persists them.
+        var files = await service.GetFilesAsync(previewFirst.Id);
+        Require(files.Files.Count == 2 && files.Files.All(file => file.Selected));
+        await service.SetSelectedFilesAsync(previewFirst.Id, ["keep.bin"]);
+        files = await service.GetFilesAsync(previewFirst.Id);
+        Require(files.Files.Single(file => file.Path == "keep.bin").Selected && !files.Files.Single(file => file.Path == "drop.bin").Selected);
+        var saved = (BEncodedList)BEncodedValue.Decode<BEncodedDictionary>(await File.ReadAllBytesAsync(paths.EngineStateFile))["Torrents"];
+        var savedFiles = ((BEncodedList)((BEncodedDictionary)saved.Single())["Files"]).Cast<BEncodedDictionary>().ToArray();
+        Require(((BEncodedString)savedFiles.Single(file => ((BEncodedString)file["Path"]).Text == "drop.bin")["Priority"]).Text == "DoNotDownload");
+
+        // With one active slot, the second torrent waits as Queued and starts once the first stops.
+        var previewSecond = await service.PrepareAddAsync(second, destination);
+        await service.CommitAddAsync(previewSecond, ["keep.bin"], startImmediately: false);
+        await service.StartAsync(previewFirst.Id);
+        await service.StartAsync(previewSecond.Id);
+        var snapshots = await service.GetSnapshotsAsync();
+        Require(snapshots.Single(item => item.Id == previewFirst.Id).State != "Queued");
+        Require(snapshots.Single(item => item.Id == previewSecond.Id).State == "Queued");
+        await service.PauseAsync(previewFirst.Id);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while ((await service.GetSnapshotsAsync()).Single(item => item.Id == previewSecond.Id).State is "Queued" or "Stopped")
+        {
+            await Task.Delay(50, timeout.Token);
+        }
+        Require((await service.GetSnapshotsAsync()).Single(item => item.Id == previewFirst.Id).State == "Stopped");
+
+        // Moving relocates the payload root and keeps the row's destination in sync.
+        var moved = Path.Combine(root, "moved");
+        await service.MoveAsync(previewFirst.Id, moved);
+        var movedSnapshot = (await service.GetSnapshotsAsync()).Single(item => item.Id == previewFirst.Id);
+        Require(movedSnapshot.Destination == moved && engine.Torrents.Single(item => item.Name == "queue-first").SavePath == moved);
+        await service.PauseAsync(previewSecond.Id);
+        await service.RemoveAsync(previewFirst.Id);
+        await service.RemoveAsync(previewSecond.Id);
+        Console.WriteLine("PASS offline duplicate rejection, deferred folder creation, file reselection persistence, active-download queue and move");
+    }
+    finally
+    {
+        try { Directory.Delete(root, recursive: true); } catch { }
     }
 }
 

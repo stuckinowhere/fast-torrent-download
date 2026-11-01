@@ -9,8 +9,8 @@
         WindowStartupLocation="CenterOwner">
   <Grid Margin="24" RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="14">
     <StackPanel Spacing="4">
-      <TextBlock Text="Select files to download" FontSize="20" FontWeight="Bold" />
-      <TextBlock Text="Choose the files to keep. Unselected files will not be downloaded." Opacity="0.72" />
+      <TextBlock x:Name="HeadingTextBlock" Text="Select files to download" FontSize="20" FontWeight="Bold" />
+      <TextBlock x:Name="HintTextBlock" Text="Choose the files to keep. Unselected files will not be downloaded." Opacity="0.72" TextWrapping="Wrap" />
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
         <TextBlock x:Name="TorrentNameTextBlock" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
         <TextBlock Grid.Column="1" x:Name="SelectionSummaryTextBlock" FontFamily="Consolas" Opacity="0.8" VerticalAlignment="Center" />

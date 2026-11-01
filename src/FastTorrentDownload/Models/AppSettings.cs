@@ -12,10 +12,16 @@ public sealed class AppSettings
     public bool EnableLocalPeerDiscovery { get; set; } = false;
     public bool EnablePortForwarding { get; set; } = true;
     public bool RequireEncryptedPeerConnections { get; set; }
+    /// <summary>Opt-in: public .torrent caches learn the info-hash of every magnet looked up.</summary>
+    public bool UsePublicMetadataCaches { get; set; }
     public int MaximumDownloadKiBPerSecond { get; set; }
     public int MaximumUploadKiBPerSecond { get; set; }
+    /// <summary>0 = unlimited. Torrents beyond the limit wait as "Queued" until a slot frees up.</summary>
+    public int MaximumActiveDownloads { get; set; }
     public string Theme { get; set; } = "System";
     public bool ConfirmCloseBeforeExit { get; set; } = true;
+    public bool CloseToTray { get; set; } = true;
+    public bool StartWithWindows { get; set; }
     public HashSet<string> PausedInfoHashes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public AppSettings Copy()
@@ -36,6 +42,7 @@ public sealed class AppSettings
         ListenAddress = string.IsNullOrWhiteSpace(ListenAddress) ? "0.0.0.0" : ListenAddress.Trim();
         MaximumDownloadKiBPerSecond = Math.Max(0, MaximumDownloadKiBPerSecond);
         MaximumUploadKiBPerSecond = Math.Max(0, MaximumUploadKiBPerSecond);
+        MaximumActiveDownloads = Math.Max(0, MaximumActiveDownloads);
         Theme = Theme is "Light" or "Dark" or "System" ? Theme : "System";
         PausedInfoHashes = new HashSet<string>(
             PausedInfoHashes.Where(hash => !string.IsNullOrWhiteSpace(hash)),

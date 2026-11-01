@@ -14,19 +14,20 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     [ObservableProperty] private string? _operation = snapshot.Operation;
     public bool IsBusy => Operation is not null || State is "Starting" or "Stopping";
     public bool CanAct => !IsBusy;
+    // "Queued" torrents are stopped by the scheduler, not by the user, so Pause is the way to hold them.
+    public bool CanPause => CanAct && State is "Downloading" or "Seeding" or "Metadata" or "Hashing" or "FetchingHashes" or "Queued";
+    public bool CanResume => CanAct && !CanPause;
     public string StateLabel => Operation ?? State;
-    partial void OnOperationChanged(string? value)
+    partial void OnOperationChanged(string? value) => NotifyActionState();
+    partial void OnStateChanged(string value) => NotifyActionState();
+
+    private void NotifyActionState()
     {
         OnPropertyChanged(nameof(IsBusy));
         OnPropertyChanged(nameof(CanAct));
+        OnPropertyChanged(nameof(CanPause));
+        OnPropertyChanged(nameof(CanResume));
         OnPropertyChanged(nameof(StateLabel));
-        OnPropertyChanged(nameof(DiagnosticsText));
-    }
-    partial void OnStateChanged(string value)
-    {
-        OnPropertyChanged(nameof(StateLabel));
-        OnPropertyChanged(nameof(IsBusy));
-        OnPropertyChanged(nameof(CanAct));
         OnPropertyChanged(nameof(DiagnosticsText));
     }
     private long _downloadRate = snapshot.DownloadRate;

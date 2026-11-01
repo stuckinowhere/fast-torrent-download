@@ -55,11 +55,13 @@ internal static class UiSmoke
             while (viewModel.Torrents.Count != 2) await Task.Delay(50, timeout.Token);
             Require(viewModel.TrayToolTipText.Contains("2 torrents"), "Tray tooltip must reflect the active queue summary.");
             Button Button(string name) => main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, name));
-            Require(!Button("Resume").IsEnabled && !Button("Remove").IsEnabled, "Actions must be disabled without a selection.");
+            Button RowButton(TorrentRowViewModel target, string name) => main.GetVisualDescendants().OfType<Button>()
+                .Single(button => Equals(button.Content, name) && ReferenceEquals(button.DataContext, target));
             var row = viewModel.Torrents.Single(row => row.Name == "Selected files example");
-            viewModel.SelectedTorrent = row;
             await Task.Delay(100);
-            Require(Button("Resume").IsEnabled && Button("Remove").IsEnabled, "Selecting a row must enable its actions.");
+            // Per-row actions need no selection step: a stopped row offers Resume and hides Pause.
+            Require(RowButton(row, "Resume").IsVisible && RowButton(row, "Resume").IsEnabled && !RowButton(row, "Pause").IsVisible, "A stopped row must offer Resume directly.");
+            Require(RowButton(row, "Files…").IsEnabled && RowButton(row, "Move…").IsEnabled && RowButton(row, "Remove").IsEnabled, "Row actions must be enabled while idle.");
             main.GetVisualDescendants().OfType<Expander>().First().IsExpanded = true;
             await Task.Delay(100);
             Require(row.Progress == 50 && row.DetailLabel.Contains("verified") && row.DiagnosticsText.Contains("Piece coverage"), "Selection metrics and diagnostics are missing.");
@@ -70,6 +72,8 @@ internal static class UiSmoke
             Require(viewModel.IsSettingsOpen && !viewModel.IsQueueOpen && main.OwnedWindows.Count == 0,
                 $"Settings must open inside MainWindow: settings={viewModel.IsSettingsOpen}, queue={viewModel.IsQueueOpen}, owned={string.Join(',', main.OwnedWindows.Select(window => window.GetType().Name))}.");
             Require(main.FindControl<TextBox>("SeedRatioTextBox") is null && main.FindControl<TextBox>("DownloadLimitTextBox") is not null, "Completion settings are inconsistent.");
+            Require(main.FindControl<CheckBox>("PublicCachesCheckBox")!.IsChecked == false && main.FindControl<TextBox>("MaxActiveTextBox")!.Text == "0",
+                "Privacy and queue settings must default to off / unlimited.");
             await VerifySettingsLayoutAsync(main, 600);
             main.Width = 1180;
             main.Height = 760;
@@ -79,11 +83,15 @@ internal static class UiSmoke
             Require(!viewModel.IsSettingsOpen && viewModel.IsQueueOpen, "Cancel must return from Settings to the torrent queue page.");
             await VerifyAddDialogsAsync(main);
 
-            viewModel.SelectedTorrent = viewModel.Torrents.Single(row => row.Name == "Completed example");
-            Button("Resume").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            // Collapse the long diagnostics panel so the virtualized second row is realized again.
+            main.GetVisualDescendants().OfType<Expander>().First().IsExpanded = false;
+            var completed = viewModel.Torrents.Single(row => row.Name == "Completed example");
+            main.GetVisualDescendants().OfType<ListBox>().First().ScrollIntoView(completed);
+            await Task.Delay(150);
+            RowButton(completed, "Resume").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
             while (viewModel.Torrents.Count != 1 || !viewModel.HasNotification) await Task.Delay(50, timeout.Token);
             Require(Button("Open folder").IsVisible && Directory.Exists(viewModel.Notification?.Destination), "Completion must offer the saved folder.");
-            Require(!Button("Remove").IsEnabled, "Removing the selected row must clear its selection.");
+            Require(viewModel.SelectedTorrent is null, "Removing the selected row must clear its selection.");
 
             Button("Activity").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
             await Task.Delay(150);
@@ -99,9 +107,9 @@ internal static class UiSmoke
             viewModel.SetTheme("Light");
             await Task.Delay(200);
             Require(main.ActualThemeVariant == ThemeVariant.Light, "The light theme did not apply.");
-            var actions = Button("Remove");
+            var actions = RowButton(row, "Remove");
             var point = actions.TranslatePoint(default, main);
-            Require(point is { } location && location.X >= 0 && location.X + actions.Bounds.Width <= main.Bounds.Width, "The toolbar overflows at the minimum desktop size.");
+            Require(point is { } location && location.X >= 0 && location.X + actions.Bounds.Width <= main.Bounds.Width, "The row actions overflow at the minimum desktop size.");
             Console.WriteLine("PASS native UI: selection/actions, diagnostics, in-app settings page, automatic completion/folder notification, activity, expiry, light/dark and minimum desktop size");
             main.RequestExit();
         }

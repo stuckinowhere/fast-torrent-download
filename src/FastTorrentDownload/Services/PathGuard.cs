@@ -10,9 +10,8 @@ public static class PathGuard
             throw new ArgumentException("Choose a download folder.", nameof(requestedDestination));
         }
 
-        var fullPath = Path.GetFullPath(candidate);
-        Directory.CreateDirectory(fullPath);
-        return fullPath;
+        // Resolution only: the folder is created once an add or move is confirmed.
+        return Path.GetFullPath(candidate);
     }
 
     public static string ResolveTorrentSource(string source)

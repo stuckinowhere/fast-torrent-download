@@ -12,7 +12,11 @@ internal static class Program
             AppLogger.LogException("Unhandled exception", e.ExceptionObject as Exception ?? new Exception(e.ExceptionObject?.ToString()));
         using var instance = new Mutex(initiallyOwned: true, "Local\\WASD.FastTorrentDownload", out var created);
         if (!created)
+        {
+            // A browser magnet click or .torrent double-click reaches the running window instead of a silent exit.
+            SingleInstanceChannel.TryForward(SingleInstanceChannel.ExtractSources(args));
             return;
+        }
 
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         instance.ReleaseMutex();
