@@ -14,14 +14,19 @@ public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel;
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly Queue<string> _externalSources = new();
+    private readonly bool _startHidden;
+    private bool _engineReady;
+    private bool _addInProgress;
     private bool _allowClose;
     private bool _shutdownStarted;
     private bool _exitRequested;
     private bool _skipExitConfirmation;
 
-    public MainWindow(MainViewModel viewModel)
+    public MainWindow(MainViewModel viewModel, bool startHidden = false)
     {
         _viewModel = viewModel;
+        _startHidden = startHidden;
         DataContext = viewModel;
         InitializeComponent();
         Opened += OnOpened;
@@ -33,8 +38,15 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (_startHidden)
+            {
+                Hide();
+            }
+
             await _viewModel.InitializeAsync();
+            _engineReady = true;
             _refreshTimer.Start();
+            await DrainExternalSourcesAsync();
             await ShowUpdateDialogIfAvailableAsync(quiet: true);
         }
         catch (Exception exception)
@@ -44,6 +56,46 @@ public partial class MainWindow : Window
     }
 
     private async void OnRefreshTick(object? sender, EventArgs eventArgs) => await _viewModel.RefreshAsync();
+
+    /// <summary>Sources handed over at launch; they are added once the engine is ready.</summary>
+    public void QueueExternalSources(IEnumerable<string> sources)
+    {
+        foreach (var source in sources)
+        {
+            _externalSources.Enqueue(source);
+        }
+    }
+
+    /// <summary>A magnet click or .torrent open forwarded by a second instance.</summary>
+    public void OpenExternalSource(string source)
+    {
+        _externalSources.Enqueue(source);
+        Show();
+        Activate();
+        _ = DrainExternalSourcesAsync();
+    }
+
+    private async Task DrainExternalSourcesAsync()
+    {
+        if (!_engineReady || _addInProgress)
+        {
+            return;
+        }
+
+        _addInProgress = true;
+        try
+        {
+            while (_externalSources.TryDequeue(out var source))
+            {
+                _viewModel.IsSettingsOpen = false;
+                await AddTorrentAsync(new AddTorrentRequest(source, null, StartImmediately: true));
+            }
+        }
+        finally
+        {
+            _addInProgress = false;
+        }
+    }
 
     private async void Add_Click(object? sender, RoutedEventArgs eventArgs)
     {
@@ -65,43 +117,57 @@ public partial class MainWindow : Window
             return;
         }
 
-        var text = (await Clipboard.TryGetTextAsync())?.Trim();
-        if (string.IsNullOrWhiteSpace(text))
+        try
         {
-            return;
-        }
+            var text = (await Clipboard.TryGetTextAsync())?.Trim();
+            if (string.IsNullOrWhiteSpace(text) || !IsTorrentSource(text))
+            {
+                return;
+            }
 
-        var isMagnet = text.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase);
-        if (!isMagnet && !string.Equals(Path.GetExtension(text), ".torrent", StringComparison.OrdinalIgnoreCase))
+            e.Handled = true;
+            await AddTorrentAsync(new AddTorrentRequest(text, null, StartImmediately: true));
+        }
+        catch (Exception exception)
         {
-            return;
+            // An async void handler must never let a clipboard failure take the app down.
+            Services.AppLogger.LogException("Clipboard paste failed", exception);
+            _viewModel.NotifyActionFailure($"Could not read the clipboard: {exception.Message}");
         }
-
-        e.Handled = true;
-        await AddTorrentAsync(new AddTorrentRequest(text, null, StartImmediately: true));
     }
 
     private async void Drop_Handle(object? sender, DragEventArgs e)
     {
-        if (e.DataTransfer is not IAsyncDataTransfer transfer)
+        try
         {
-            return;
-        }
+            if (e.DataTransfer is not IAsyncDataTransfer transfer)
+            {
+                return;
+            }
 
-        var files = await transfer.TryGetFilesAsync();
-        var path = files?.Select(file => file.TryGetLocalPath()).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p));
-        var source = (string.IsNullOrWhiteSpace(path) ? await transfer.TryGetTextAsync() : path) ?? string.Empty;
-        var trimmed = source.Trim();
-        var isMagnet = trimmed.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase);
-        if (!isMagnet && !string.Equals(Path.GetExtension(trimmed), ".torrent", StringComparison.OrdinalIgnoreCase))
+            var files = await transfer.TryGetFilesAsync();
+            var path = files?.Select(file => file.TryGetLocalPath()).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p));
+            var source = (string.IsNullOrWhiteSpace(path) ? await transfer.TryGetTextAsync() : path) ?? string.Empty;
+            var trimmed = source.Trim();
+            if (!IsTorrentSource(trimmed))
+            {
+                _viewModel.StatusMessage = "Drop a .torrent file here, or add a magnet link.";
+                return;
+            }
+
+            _viewModel.IsSettingsOpen = false;
+            await AddTorrentAsync(new AddTorrentRequest(trimmed, null, StartImmediately: true));
+        }
+        catch (Exception exception)
         {
-            _viewModel.StatusMessage = "Drop a .torrent file here, or add a magnet link.";
-            return;
+            Services.AppLogger.LogException("Drop failed", exception);
+            _viewModel.NotifyActionFailure($"Could not read the dropped item: {exception.Message}");
         }
-
-        _viewModel.IsSettingsOpen = false;
-        await AddTorrentAsync(new AddTorrentRequest(trimmed, null, StartImmediately: true));
     }
+
+    private static bool IsTorrentSource(string text) =>
+        text.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(Path.GetExtension(text), ".torrent", StringComparison.OrdinalIgnoreCase);
 
     private async Task AddTorrentAsync(AddTorrentRequest request)
     {
@@ -190,35 +256,73 @@ public partial class MainWindow : Window
         return string.IsNullOrWhiteSpace(fileName) ? "Torrent file" : fileName;
     }
 
-    private async void Resume_Click(object? sender, RoutedEventArgs eventArgs) => await RunActionAsync(_viewModel.StartSelectedAsync);
-    private async void Pause_Click(object? sender, RoutedEventArgs eventArgs)
+    private static TorrentRowViewModel? RowOf(object? sender) => (sender as Control)?.DataContext as TorrentRowViewModel;
+
+    private async void RowResume_Click(object? sender, RoutedEventArgs eventArgs) => await RunRowActionAsync(sender, _viewModel.StartTorrentAsync);
+    private async void RowPause_Click(object? sender, RoutedEventArgs eventArgs) => await RunRowActionAsync(sender, _viewModel.PauseTorrentAsync);
+    private async void RowRecheck_Click(object? sender, RoutedEventArgs eventArgs) => await RunRowActionAsync(sender, _viewModel.RecheckTorrentAsync);
+    private async void RowRemove_Click(object? sender, RoutedEventArgs eventArgs) => await RunRowActionAsync(sender, _viewModel.RemoveTorrentAsync);
+    private void RowFolder_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.OpenTorrentFolder(RowOf(sender));
+
+    private async void RowFiles_Click(object? sender, RoutedEventArgs eventArgs)
     {
-        if (_viewModel.Torrents.Count == 0)
-        {
-            _viewModel.StatusMessage = "No torrents to pause.";
-            return;
-        }
-
-        var items = _viewModel.Torrents
-            .Where(row => !row.IsBusy)
-            .Select(row => new PausableTorrentItem(row.Id, row.Name, row.State))
-            .ToArray();
-        if (items.Length == 0)
-        {
-            _viewModel.StatusMessage = "Wait for the current torrent operations to finish.";
-            return;
-        }
-        var id = await new PauseTorrentWindow(items, _viewModel.SelectedTorrent?.Id) { Icon = Icon }.ShowDialog<string?>(this);
-        if (id is null)
+        if (RowOf(sender) is not { } row)
         {
             return;
         }
 
-        await RunActionAsync(() => _viewModel.PauseTorrentAsync(id));
+        _viewModel.SelectedTorrent = row;
+        await RunActionAsync(async () =>
+        {
+            var files = await _viewModel.GetFilesAsync(row.Id);
+            var picker = new SelectTorrentFilesWindow(files.Name, editing: true) { Icon = Icon };
+            var dialogTask = picker.ShowDialog<string[]?>(this);
+            picker.ShowPreview(files);
+            var selected = await dialogTask;
+            if (selected is not null)
+            {
+                await _viewModel.ChangeFilesAsync(row.Id, selected);
+            }
+        });
     }
-    private async void Recheck_Click(object? sender, RoutedEventArgs eventArgs) => await RunActionAsync(_viewModel.RecheckSelectedAsync);
 
-    private void Folder_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.OpenSelectedFolder();
+    private async void RowMove_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        if (RowOf(sender) is not { } row)
+        {
+            return;
+        }
+
+        _viewModel.SelectedTorrent = row;
+        await RunActionAsync(async () =>
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = $"Move “{row.Name}” to…",
+                AllowMultiple = false
+            });
+            if (folders.Count == 0)
+            {
+                return;
+            }
+
+            var destination = folders[0].TryGetLocalPath() ?? folders[0].Path.LocalPath;
+            await _viewModel.MoveTorrentAsync(row.Id, destination);
+        });
+    }
+
+    private async Task RunRowActionAsync(object? sender, Func<string, Task> action)
+    {
+        if (RowOf(sender) is not { } row)
+        {
+            return;
+        }
+
+        _viewModel.SelectedTorrent = row;
+        await RunActionAsync(() => action(row.Id));
+    }
+
+    private void Folder_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.OpenTorrentFolder(null);
     private void NotificationFolder_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.OpenNotificationFolder();
     private async void PortGuide_Click(object? sender, RoutedEventArgs eventArgs)
     {
@@ -230,8 +334,6 @@ public partial class MainWindow : Window
 
     private async void Activity_Click(object? sender, RoutedEventArgs eventArgs) =>
         await new ActivityWindow(_viewModel.Activity) { Icon = Icon }.ShowDialog(this);
-
-    private async void Remove_Click(object? sender, RoutedEventArgs eventArgs) => await RunActionAsync(_viewModel.RemoveSelectedAsync);
 
     private void ThemeToggle_Click(object? sender, RoutedEventArgs eventArgs)
     {
@@ -259,6 +361,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (quiet && !IsVisible)
+        {
+            // A tray-only session must not pop a modal; the next manual check will offer it.
+            return;
+        }
+
         var installed = await new UpdateAvailableWindow(update, new Services.AppUpdateService()) { Icon = Icon }.ShowDialog<bool>(this);
         if (installed)
         {
@@ -282,6 +390,7 @@ public partial class MainWindow : Window
     {
         var copy = settings.Copy();
         DefaultDownloadFolderTextBox.Text = copy.DefaultDownloadFolder;
+        MaxActiveTextBox.Text = copy.MaximumActiveDownloads.ToString(CultureInfo.InvariantCulture);
         ListenPortTextBox.Text = copy.ListenPort.ToString(CultureInfo.InvariantCulture);
         ListenAddressTextBox.Text = copy.ListenAddress;
         DhtCheckBox.IsChecked = copy.EnableDht;
@@ -289,8 +398,11 @@ public partial class MainWindow : Window
         LsdCheckBox.IsChecked = copy.EnableLocalPeerDiscovery;
         PortForwardingCheckBox.IsChecked = copy.EnablePortForwarding;
         EncryptionCheckBox.IsChecked = copy.RequireEncryptedPeerConnections;
+        PublicCachesCheckBox.IsChecked = copy.UsePublicMetadataCaches;
         DownloadLimitTextBox.Text = copy.MaximumDownloadKiBPerSecond.ToString(CultureInfo.InvariantCulture);
         UploadLimitTextBox.Text = copy.MaximumUploadKiBPerSecond.ToString(CultureInfo.InvariantCulture);
+        CloseToTrayCheckBox.IsChecked = copy.CloseToTray;
+        StartWithWindowsCheckBox.IsChecked = copy.StartWithWindows;
         ThemeComboBox.SelectedIndex = copy.Theme switch { "Light" => 1, "Dark" => 2, _ => 0 };
         ValidationErrorTextBlock.Text = string.Empty;
         ValidationErrorTextBlock.IsVisible = false;
@@ -344,8 +456,15 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!int.TryParse(MaxActiveTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var maxActive) || maxActive < 0)
+        {
+            ShowSettingsValidationError("Maximum active downloads must be 0 or a positive number.");
+            return;
+        }
+
         var updated = _viewModel.Settings.Copy();
         updated.DefaultDownloadFolder = DefaultDownloadFolderTextBox.Text ?? string.Empty;
+        updated.MaximumActiveDownloads = maxActive;
         updated.ListenPort = listenPort;
         updated.ListenAddress = ListenAddressTextBox.Text?.Trim() ?? string.Empty;
         updated.EnableDht = DhtCheckBox.IsChecked == true;
@@ -353,8 +472,11 @@ public partial class MainWindow : Window
         updated.EnableLocalPeerDiscovery = LsdCheckBox.IsChecked == true;
         updated.EnablePortForwarding = PortForwardingCheckBox.IsChecked == true;
         updated.RequireEncryptedPeerConnections = EncryptionCheckBox.IsChecked == true;
+        updated.UsePublicMetadataCaches = PublicCachesCheckBox.IsChecked == true;
         updated.MaximumDownloadKiBPerSecond = downloadLimit;
         updated.MaximumUploadKiBPerSecond = uploadLimit;
+        updated.CloseToTray = CloseToTrayCheckBox.IsChecked == true;
+        updated.StartWithWindows = StartWithWindowsCheckBox.IsChecked == true;
         updated.Theme = ThemeComboBox.SelectedIndex switch { 1 => "Light", 2 => "Dark", _ => "System" };
         updated.Normalize();
 
@@ -416,7 +538,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!_exitRequested)
+        if (!_exitRequested && _viewModel.Settings.CloseToTray)
         {
             eventArgs.Cancel = true;
             Hide();

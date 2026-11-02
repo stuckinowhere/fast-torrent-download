@@ -13,23 +13,31 @@ public sealed partial class TorrentFileSelectionItem : ObservableObject
         Path = file.Path;
         Length = file.Length;
         SizeLabel = Services.TransferFormatting.Bytes(file.Length);
+        _isSelected = file.Selected;
     }
 
     public string Path { get; }
     public long Length { get; }
     public string SizeLabel { get; }
     [ObservableProperty]
-    private bool _isSelected = true;
+    private bool _isSelected;
 }
 
 public partial class SelectTorrentFilesWindow : Window
 {
-    public SelectTorrentFilesWindow(string torrentName)
+    public SelectTorrentFilesWindow(string torrentName, bool editing = false)
     {
         Files = new ObservableCollection<TorrentFileSelectionItem>();
         DataContext = this;
         InitializeComponent();
         TorrentNameTextBlock.Text = torrentName;
+        if (editing)
+        {
+            Title = "Change downloaded files";
+            HeadingTextBlock.Text = "Change files to download";
+            HintTextBlock.Text = "Deselected files stop downloading; already written data stays on disk.";
+            AddSelectedButton.Content = "Apply selection";
+        }
     }
 
     public ObservableCollection<TorrentFileSelectionItem> Files { get; }

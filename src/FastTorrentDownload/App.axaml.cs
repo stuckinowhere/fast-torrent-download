@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using FastTorrentDownload.Services;
 using FastTorrentDownload.ViewModels;
@@ -13,9 +14,14 @@ namespace FastTorrentDownload;
 public partial class App : Application
 {
     private readonly AppPaths _paths;
+    private readonly string? _pipeName;
 
     public App() : this(new AppPaths()) { }
-    public App(AppPaths paths) => _paths = paths;
+    public App(AppPaths paths, string? pipeName = null)
+    {
+        _paths = paths;
+        _pipeName = pipeName;
+    }
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -28,7 +34,11 @@ public partial class App : Application
             var settings = new SettingsStore(paths);
             var engine = new TorrentEngineService(paths);
             var viewModel = new MainViewModel(engine, settings, new ReleaseUpdateService());
-            var mainWindow = new MainWindow(viewModel);
+            var args = desktop.Args ?? [];
+            var mainWindow = new MainWindow(viewModel, startHidden: args.Contains(StartupRegistration.MinimizedArgument));
+            mainWindow.QueueExternalSources(SingleInstanceChannel.ExtractSources(args));
+            var channel = new SingleInstanceChannel(_pipeName);
+            channel.Start(source => Dispatcher.UIThread.Post(() => mainWindow.OpenExternalSource(source)));
             WindowIcon? icon = null;
             try
             {
@@ -64,7 +74,11 @@ public partial class App : Application
             TrayIcon.SetIcons(this, icons);
 
             desktop.MainWindow = mainWindow;
-            desktop.Exit += (_, _) => trayIcon.Dispose();
+            desktop.Exit += (_, _) =>
+            {
+                channel.Dispose();
+                trayIcon.Dispose();
+            };
         }
 
         base.OnFrameworkInitializationCompleted();

@@ -10,8 +10,10 @@
 
 | Surface | Entry points | Verify |
 | --- | --- | --- |
-| Add torrent and choose files | `Services/TorrentEngineService.cs`, `Services/PathGuard.cs` | Both torrent files and magnets validate paths before payload registration; preview writes no payload. |
-| Queue and transfer controls | `ViewModels/MainViewModel.cs` | Pause, removal and automatic completion preserve downloaded files and survive restart. |
+| Add torrent and choose files | `Services/TorrentEngineService.cs`, `Services/PathGuard.cs` | Both torrent files and magnets validate paths before payload registration; preview writes no payload and creates no folder; duplicates are rejected. |
+| Queue and transfer controls | `ViewModels/MainViewModel.cs`, `Views/MainWindow.axaml` | Per-row actions; pause, removal and automatic completion preserve downloaded files and survive restart; file reselection and moves persist; `MaximumActiveDownloads` queues the rest. |
+| Second launch / shell integration | `Program.cs`, `Services/SingleInstanceChannel.cs`, `installer/fast-torrent-download.iss` | A second instance forwards magnet/.torrent args over the named pipe and exits; the installer registers the handlers per user. |
+| Privacy | `Models/AppSettings.cs` (`UsePublicMetadataCaches`) | Public .torrent caches are contacted only when the setting is on. |
 
 ## Do not ship without
 

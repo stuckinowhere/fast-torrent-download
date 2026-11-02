@@ -68,8 +68,8 @@ internal static class LiveTransferCheck
             servingMetadata = false;
             Require(downloadEngine.Torrents.Single().State == TorrentState.Stopped,
                 "Preview must not start a payload download.");
-            Require(!Directory.EnumerateFiles(Path.Combine(root, "download"), "*", SearchOption.AllDirectories).Any(),
-                "Preview wrote payload files before the user selected them.");
+            Require(!Directory.Exists(Path.Combine(root, "download")),
+                "Preview created the download folder before the user confirmed the selection.");
             await service.CommitAddAsync(preview, ["loopback.bin"], startImmediately: false);
             var manager = downloadEngine.Torrents.Single();
             var downloadedPath = manager.Files.Single().FullPath;

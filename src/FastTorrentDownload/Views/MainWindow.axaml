@@ -43,13 +43,7 @@
           <TextBlock Text="{Binding TotalDownloadRate}" FontFamily="Consolas" VerticalAlignment="Center" />
           <TextBlock Text="{Binding TotalUploadRate}" FontFamily="Consolas" VerticalAlignment="Center" />
         </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-          <Button Content="Resume" Click="Resume_Click" IsEnabled="{Binding SelectedTorrent.CanAct, FallbackValue=False, TargetNullValue=False}" />
-          <Button Content="Pause" Click="Pause_Click" IsEnabled="{Binding HasTorrents}" />
-          <Button Content="Recheck" Click="Recheck_Click" IsEnabled="{Binding SelectedTorrent.CanAct, FallbackValue=False, TargetNullValue=False}" />
-          <Button Content="Show folder" Click="Folder_Click" />
-          <Button Content="Remove" Click="Remove_Click" IsEnabled="{Binding SelectedTorrent.CanAct, FallbackValue=False, TargetNullValue=False}" />
-        </StackPanel>
+        <Button Grid.Column="1" Content="Default folder" Click="Folder_Click" ToolTip.Tip="Open the default download folder" />
       </Grid>
 
       <ListBox Grid.Row="1" ItemsSource="{Binding Torrents}" SelectedItem="{Binding SelectedTorrent, Mode=TwoWay}"
@@ -57,7 +51,7 @@
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="vm:TorrentRowViewModel">
             <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="1" Padding="18">
-              <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="9">
+              <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="9">
                 <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="16" TextTrimming="CharacterEllipsis" />
                 <TextBlock Grid.Column="1" Text="{Binding StateLabel}" FontFamily="Consolas" Opacity="0.75" />
                 <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding Progress}" Height="8" />
@@ -66,7 +60,17 @@
                   <TextBlock Grid.Column="1" Text="{Binding TransferLabel}" FontFamily="Consolas" HorizontalAlignment="Right" />
                 </Grid>
                 <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Text="{Binding DetailLabel}" Opacity="0.8" TextWrapping="Wrap" />
-                <Expander Grid.Row="4" Grid.ColumnSpan="2" Header="Details and speed diagnostics" HorizontalAlignment="Stretch">
+                <!-- Actions live on the row they act on (Fitts): no selection step, no chooser dialog. -->
+                <WrapPanel Grid.Row="4" Grid.ColumnSpan="2" Orientation="Horizontal" ItemSpacing="8" LineSpacing="8">
+                  <Button Classes="row-action" Content="Resume" Click="RowResume_Click" IsVisible="{Binding CanResume}" IsEnabled="{Binding CanAct}" />
+                  <Button Classes="row-action" Content="Pause" Click="RowPause_Click" IsVisible="{Binding CanPause}" IsEnabled="{Binding CanAct}" />
+                  <Button Classes="row-action" Content="Recheck" Click="RowRecheck_Click" IsEnabled="{Binding CanAct}" />
+                  <Button Classes="row-action" Content="Files…" Click="RowFiles_Click" IsEnabled="{Binding CanAct}" />
+                  <Button Classes="row-action" Content="Move…" Click="RowMove_Click" IsEnabled="{Binding CanAct}" />
+                  <Button Classes="row-action" Content="Show folder" Click="RowFolder_Click" />
+                  <Button Classes="row-action" Content="Remove" Click="RowRemove_Click" IsEnabled="{Binding CanAct}" />
+                </WrapPanel>
+                <Expander Grid.Row="5" Grid.ColumnSpan="2" Header="Details and speed diagnostics" HorizontalAlignment="Stretch">
                   <StackPanel Spacing="8" Margin="0,8,0,0">
                     <SelectableTextBlock Text="{Binding Destination}" TextWrapping="Wrap" />
                     <SelectableTextBlock Text="{Binding SessionLabel}" TextWrapping="Wrap" />
@@ -96,6 +100,11 @@
               <Button Grid.Column="1" Content="Choose…" Click="ChooseFolder_Click" MinHeight="44" HorizontalContentAlignment="Left" VerticalContentAlignment="Center" />
             </Grid>
             <TextBlock Text="Files remain on disk when you remove an item from the queue." Opacity="0.68" TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12" Margin="0,8,0,0">
+              <TextBlock Text="Maximum active downloads (0 = unlimited)" VerticalAlignment="Center" />
+              <TextBox x:Name="MaxActiveTextBox" Grid.Column="1" Width="150" HorizontalAlignment="Left" />
+            </Grid>
+            <TextBlock Text="Torrents beyond the limit wait as “Queued” and start automatically when a slot frees up." Opacity="0.68" TextWrapping="Wrap" />
           </StackPanel>
 
           <StackPanel Spacing="7">
@@ -120,6 +129,12 @@
           </StackPanel>
 
           <StackPanel Spacing="7">
+            <TextBlock Text="Privacy" FontWeight="Bold" FontSize="18" />
+            <CheckBox x:Name="PublicCachesCheckBox" Content="Fetch magnet file lists from public .torrent caches" />
+            <TextBlock Text="Off by default. When on, the info-hash of each magnet link you add is sent to itorrents.org, torrage.info and btcache.me to resolve the file list faster. The swarm (DHT / trackers) is always used as well." Opacity="0.68" TextWrapping="Wrap" />
+          </StackPanel>
+
+          <StackPanel Spacing="7">
             <TextBlock Text="Bandwidth and completion" FontWeight="Bold" FontSize="18" />
             <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="8">
               <TextBlock Text="Download limit (KiB/s, 0 = unlimited)" VerticalAlignment="Center" />
@@ -128,6 +143,14 @@
               <TextBox x:Name="UploadLimitTextBox" Grid.Row="1" Grid.Column="1" Width="150" HorizontalAlignment="Left" />
             </Grid>
             <TextBlock Text="Completed downloads leave the queue automatically. Downloaded files are kept, and the completion notification lets you open their folder." Opacity="0.68" TextWrapping="Wrap" />
+          </StackPanel>
+
+          <StackPanel Spacing="7">
+            <TextBlock Text="Behaviour" FontWeight="Bold" FontSize="18" />
+            <WrapPanel>
+              <CheckBox x:Name="CloseToTrayCheckBox" Content="Closing the window keeps downloads running in the tray" Margin="0,0,18,8" />
+              <CheckBox x:Name="StartWithWindowsCheckBox" Content="Start with Windows (minimized to tray)" Margin="0,0,18,8" />
+            </WrapPanel>
           </StackPanel>
 
           <StackPanel Spacing="7">

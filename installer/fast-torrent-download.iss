@@ -32,6 +32,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\\{#MyAppExeName}
+ChangesAssociations=yes
 
 [Files]
 Source: "{#SourceDir}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -42,6 +43,19 @@ Name: "{autodesktop}\\{#MyAppName}"; Filename: "{app}\\{#MyAppExeName}"; Tasks: 
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
+Name: "magnethandler"; Description: "Open &magnet links with {#MyAppName}"; GroupDescription: "Integration:"
+Name: "torrentassoc"; Description: "Open .&torrent files with {#MyAppName}"; GroupDescription: "Integration:"
+
+; Per-user registration (PrivilegesRequired=lowest): HKA resolves to HKCU, so no elevation and no machine-wide change.
+[Registry]
+Root: HKA; Subkey: "Software\\Classes\\magnet"; ValueType: string; ValueName: ""; ValueData: "URL:Magnet link"; Flags: uninsdeletekey; Tasks: magnethandler
+Root: HKA; Subkey: "Software\\Classes\\magnet"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Tasks: magnethandler
+Root: HKA; Subkey: "Software\\Classes\\magnet\\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\\{#MyAppExeName},0"; Tasks: magnethandler
+Root: HKA; Subkey: "Software\\Classes\\magnet\\shell\\open\\command"; ValueType: string; ValueName: ""; ValueData: """{app}\\{#MyAppExeName}"" ""%1"""; Tasks: magnethandler
+Root: HKA; Subkey: "Software\\Classes\\.torrent"; ValueType: string; ValueName: ""; ValueData: "FastTorrentDownload.Torrent"; Flags: uninsdeletevalue; Tasks: torrentassoc
+Root: HKA; Subkey: "Software\\Classes\\FastTorrentDownload.Torrent"; ValueType: string; ValueName: ""; ValueData: "Torrent file"; Flags: uninsdeletekey; Tasks: torrentassoc
+Root: HKA; Subkey: "Software\\Classes\\FastTorrentDownload.Torrent\\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\\{#MyAppExeName},0"; Tasks: torrentassoc
+Root: HKA; Subkey: "Software\\Classes\\FastTorrentDownload.Torrent\\shell\\open\\command"; ValueType: string; ValueName: ""; ValueData: """{app}\\{#MyAppExeName}"" ""%1"""; Tasks: torrentassoc
 
 [Run]
 Filename: "{app}\\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent

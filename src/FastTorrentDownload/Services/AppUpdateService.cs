@@ -160,7 +160,7 @@ public sealed class AppUpdateService
         {
             Timeout = TimeSpan.FromMinutes(15)
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("fast-torrent-download-updater/1.0");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd($"fast-torrent-download-updater/{AppInfo.Version}");
         return client;
     }
 }

@@ -14,7 +14,6 @@ public partial class AddTorrentWindow : Window
     {
         InitializeComponent();
         DestinationTextBox.Text = defaultDestination;
-        SourceTextBox.TextChanged += (_, _) => Services.TorrentEngineService.PrefetchMagnetMetadata(SourceTextBox.Text);
     }
 
     private async void PasteSource_Click(object? sender, RoutedEventArgs eventArgs)
