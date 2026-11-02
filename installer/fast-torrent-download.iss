@@ -33,6 +33,8 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\\{#MyAppExeName}
 ChangesAssociations=yes
+; Refuse to replace files under a running instance; the mutex name matches Program.cs.
+AppMutex=Local\WASD.FastTorrentDownload
 
 [Files]
 Source: "{#SourceDir}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -48,10 +50,13 @@ Name: "torrentassoc"; Description: "Open .&torrent files with {#MyAppName}"; Gro
 
 ; Per-user registration (PrivilegesRequired=lowest): HKA resolves to HKCU, so no elevation and no machine-wide change.
 [Registry]
-Root: HKA; Subkey: "Software\\Classes\\magnet"; ValueType: string; ValueName: ""; ValueData: "URL:Magnet link"; Flags: uninsdeletekey; Tasks: magnethandler
-Root: HKA; Subkey: "Software\\Classes\\magnet"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Tasks: magnethandler
-Root: HKA; Subkey: "Software\\Classes\\magnet\\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\\{#MyAppExeName},0"; Tasks: magnethandler
-Root: HKA; Subkey: "Software\\Classes\\magnet\\shell\\open\\command"; ValueType: string; ValueName: ""; ValueData: """{app}\\{#MyAppExeName}"" ""%1"""; Tasks: magnethandler
+; The magnet key is shared with other clients: delete only our values and the key only when it is empty afterwards.
+Root: HKA; Subkey: "Software\\Classes\\magnet"; ValueType: string; ValueName: ""; ValueData: "URL:Magnet link"; Flags: uninsdeletevalue uninsdeletekeyifempty; Tasks: magnethandler
+Root: HKA; Subkey: "Software\\Classes\\magnet"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletevalue; Tasks: magnethandler
+Root: HKA; Subkey: "Software\\Classes\\magnet\\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\\{#MyAppExeName},0"; Flags: uninsdeletevalue uninsdeletekeyifempty; Tasks: magnethandler
+Root: HKA; Subkey: "Software\\Classes\\magnet\\shell\\open\\command"; ValueType: string; ValueName: ""; ValueData: """{app}\\{#MyAppExeName}"" ""%1"""; Flags: uninsdeletevalue uninsdeletekeyifempty; Tasks: magnethandler
+Root: HKA; Subkey: "Software\\Classes\\magnet\\shell\\open"; Flags: uninsdeletekeyifempty; Tasks: magnethandler
+Root: HKA; Subkey: "Software\\Classes\\magnet\\shell"; Flags: uninsdeletekeyifempty; Tasks: magnethandler
 Root: HKA; Subkey: "Software\\Classes\\.torrent"; ValueType: string; ValueName: ""; ValueData: "FastTorrentDownload.Torrent"; Flags: uninsdeletevalue; Tasks: torrentassoc
 Root: HKA; Subkey: "Software\\Classes\\FastTorrentDownload.Torrent"; ValueType: string; ValueName: ""; ValueData: "Torrent file"; Flags: uninsdeletekey; Tasks: torrentassoc
 Root: HKA; Subkey: "Software\\Classes\\FastTorrentDownload.Torrent\\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\\{#MyAppExeName},0"; Tasks: torrentassoc

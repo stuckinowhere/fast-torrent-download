@@ -24,7 +24,7 @@ The current checks include real loopback transfers with a stalled tracker, pause
 
 ## Privacy
 
-Magnet file lists come from the swarm (DHT, peer exchange, trackers). The optional **Fetch magnet file lists from public .torrent caches** setting is off by default: when enabled, the info-hash of each magnet you add is sent to itorrents.org, torrage.info and btcache.me to resolve the file list faster. The update check contacts `api.github.com` only.
+Magnet file lists come from the swarm (DHT, peer exchange, trackers). The optional **Fetch magnet file lists from public .torrent caches** setting is off by default: when enabled, the info-hash of each magnet you add is sent to itorrents.org, torrage.info and btcache.me to resolve the file list faster; only the info-hash-verified file list is used from a cache response, never its tracker or web-seed URLs. The update check contacts `api.github.com` only.
 
 Listener binding applies to incoming peer/DHT sockets. It is **not** a VPN kill switch or a complete outbound leak-prevention feature: tracker HTTP and other outbound transports are not claimed to be bound.
 
