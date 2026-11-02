@@ -30,7 +30,7 @@ internal static class UiSmoke
             {
                 var paths = PrepareAsync().GetAwaiter().GetResult();
                 Console.WriteLine($"Isolated UI verification data: {paths.SettingsFile}");
-                var builder = AppBuilder.Configure(() => new FastTorrentDownload.App(paths)).UsePlatformDetect();
+                var builder = AppBuilder.Configure(() => new FastTorrentDownload.App(paths, PipeName)).UsePlatformDetect();
                 if (automated) builder.AfterSetup(_ => Dispatcher.UIThread.Post(async () => await VerifyAsync()));
                 result = builder.StartWithClassicDesktopLifetime([]);
             }
@@ -129,6 +129,7 @@ internal static class UiSmoke
     }
 
     private static string? _fixtureRoot;
+    private static readonly string PipeName = "WASD.FastTorrentDownload.test-" + Guid.NewGuid().ToString("N");
 
     // Exercises the real App (engine, pipe listener, dialogs) with the isolated fixture:
     // the paths a user actually clicks, not the view-model shortcuts.
@@ -154,7 +155,7 @@ internal static class UiSmoke
 
         // 1. A second launch forwards a .torrent over the real named pipe; the running window adds it.
         var forwarded = Path.Combine(root, "Forwarded example.torrent");
-        Require(SingleInstanceChannel.TryForward([forwarded]), "Forwarding to the running instance failed.");
+        Require(SingleInstanceChannel.TryForward([forwarded], PipeName), "Forwarding to the running instance failed.");
         var picker = await PickerAsync();
         picker.FindControl<Button>("AddSelectedButton")!.RaiseEvent(click);
         await UntilAsync(() => viewModel.Torrents.Count == 2, "The forwarded torrent was not added.");
@@ -221,11 +222,10 @@ internal static class UiSmoke
         }
         finally
         {
-            if (before is not null)
-            {
-                using var writable = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
-                writable?.SetValue("FastTorrentDownload", before);
-            }
+            // Leave the Run key exactly as it was, even when an assertion above threw after Apply(true).
+            using var writable = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+            if (before is not null) writable?.SetValue("FastTorrentDownload", before);
+            else writable?.DeleteValue("FastTorrentDownload", throwOnMissingValue: false);
         }
 
         Console.WriteLine("PASS end-to-end: pipe forwarding adds a torrent, Files… edits a running torrent, active-download queue promotes, Move relocates data, close-to-tray and Run entry round-trip");

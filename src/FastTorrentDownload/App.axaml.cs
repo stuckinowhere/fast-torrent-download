@@ -14,9 +14,14 @@ namespace FastTorrentDownload;
 public partial class App : Application
 {
     private readonly AppPaths _paths;
+    private readonly string? _pipeName;
 
     public App() : this(new AppPaths()) { }
-    public App(AppPaths paths) => _paths = paths;
+    public App(AppPaths paths, string? pipeName = null)
+    {
+        _paths = paths;
+        _pipeName = pipeName;
+    }
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -32,7 +37,7 @@ public partial class App : Application
             var args = desktop.Args ?? [];
             var mainWindow = new MainWindow(viewModel, startHidden: args.Contains(StartupRegistration.MinimizedArgument));
             mainWindow.QueueExternalSources(SingleInstanceChannel.ExtractSources(args));
-            var channel = new SingleInstanceChannel();
+            var channel = new SingleInstanceChannel(_pipeName);
             channel.Start(source => Dispatcher.UIThread.Post(() => mainWindow.OpenExternalSource(source)));
             WindowIcon? icon = null;
             try

@@ -522,11 +522,13 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
 
 static async Task CheckSingleInstanceForwardingAsync()
 {
-    using var channel = new SingleInstanceChannel();
+    // A unique pipe name keeps the check away from an installed instance's real pipe.
+    var pipeName = "WASD.FastTorrentDownload.test-" + Guid.NewGuid().ToString("N");
+    using var channel = new SingleInstanceChannel(pipeName);
     var received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     channel.Start(source => received.TrySetResult(source));
     await Task.Delay(200); // Let the pipe server come up before the client connects.
-    Require(SingleInstanceChannel.TryForward(["magnet:?xt=urn:btih:792b9fa5793e46c51db29f59c6a9037cf20492f4&dn=Forwarded"]));
+    Require(SingleInstanceChannel.TryForward(["magnet:?xt=urn:btih:792b9fa5793e46c51db29f59c6a9037cf20492f4&dn=Forwarded"], pipeName));
     var source = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
     Require(source.StartsWith("magnet:?xt=urn:btih:792b9fa5", StringComparison.Ordinal));
     Console.WriteLine("PASS a second launch forwards its magnet link to the running instance");
