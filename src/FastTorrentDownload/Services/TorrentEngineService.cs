@@ -27,6 +27,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
     // Torrents that want to run but wait for a free slot under MaximumActiveDownloads.
     private readonly HashSet<string> _queuedHashes = new(StringComparer.OrdinalIgnoreCase);
     public static TimeSpan StopAnnounceTimeout { get; } = TimeSpan.FromSeconds(2);
+    private const int MaxCachedTorrentBytes = 10 * 1024 * 1024;
     // Peer enumeration and piece-coverage math run per torrent; refreshing them every second
     // is wasted CPU for a panel that is usually collapsed.
     public static TimeSpan DiagnosticsInterval { get; } = TimeSpan.FromSeconds(3);
@@ -238,15 +239,26 @@ public sealed class TorrentEngineService : IAsyncDisposable
         verifiedTorrent = null;
         var hash = magnet.InfoHashes.V1?.ToHex().ToUpperInvariant();
         if (string.IsNullOrWhiteSpace(hash) ||
-            torrentBytes is not { Length: > 32 and < 10 * 1024 * 1024 } ||
+            torrentBytes is not { Length: > 32 and < MaxCachedTorrentBytes } ||
             !Torrent.TryLoad(torrentBytes, out var loaded) ||
             loaded.InfoHashes != magnet.InfoHashes)
         {
             return false;
         }
 
-        CachedMagnetTorrents[hash] = torrentBytes;
-        verifiedTorrent = loaded;
+        // Only the info dictionary is covered by the info-hash check. Announce lists and
+        // webseeds supplied by a cache host are untrusted, so they never reach the engine.
+        var infoOnly = new BEncodedDictionary
+        {
+            ["info"] = BEncodedValue.Decode<BEncodedDictionary>(torrentBytes)["info"]
+        }.Encode();
+        if (!Torrent.TryLoad(infoOnly, out var stripped) || stripped.InfoHashes != magnet.InfoHashes)
+        {
+            return false;
+        }
+
+        CachedMagnetTorrents[hash] = infoOnly;
+        verifiedTorrent = stripped;
         return true;
     }
 
@@ -382,7 +394,11 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
     private static HttpClient CreateMetadataCacheHttpClient()
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        var client = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(5),
+            MaxResponseContentBufferSize = MaxCachedTorrentBytes
+        };
         client.DefaultRequestHeaders.UserAgent.ParseAdd($"Mozilla/5.0 (Windows NT 10.0; Win64; x64) FastTorrentDownload/{AppInfo.Version}");
         return client;
     }
@@ -530,7 +546,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 throw new KeyNotFoundException("That torrent preview is no longer available.");
             }
 
-            PathGuard.ThrowIfUnsafeTorrentFiles(pending.Destination, pending.Manager.Files.Select(file => file.Path));
+            PathGuard.ThrowIfUnsafeTorrentFiles(pending.Destination, pending.Manager.Files.Select(file => file.Path).Prepend(pending.Manager.Name));
             // The folder is only created once the user confirms, so a cancelled preview leaves no trace.
             Directory.CreateDirectory(pending.Destination);
             await ApplyFileSelectionAsync(pending.Manager, selectedFiles);

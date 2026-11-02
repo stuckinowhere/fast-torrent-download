@@ -101,6 +101,7 @@ Check("magnet links with query parameters are accepted as torrent sources", () =
     var samplePiece = new byte[16_384];
     var sampleDict = new BEncodedDictionary
     {
+        ["announce"] = new BEncodedString("http://cache-host.example/announce"),
         ["info"] = new BEncodedDictionary
         {
             ["name"] = new BEncodedString("fast-magnet-cache.bin"),
@@ -115,6 +116,8 @@ Check("magnet links with query parameters are accepted as torrent sources", () =
     var wrongMagnet = MagnetLink.Parse("magnet:?xt=urn:btih:792b9fa5793e46c51db29f59c6a9037cf20492f4");
     Require(!TorrentEngineService.TryCacheMagnetTorrentBytes(wrongMagnet, sampleBytes, out _));
     Require(TorrentEngineService.TryCacheMagnetTorrentBytes(matchingMagnet, sampleBytes, out var verified) && verified is not null);
+    // Trackers supplied by a cache host are not covered by the info-hash and must be dropped.
+    Require(verified!.AnnounceUrls.Count == 0 && verified.InfoHashes == sampleTorrent.InfoHashes);
     Require(TorrentEngineService.TryGetVerifiedCachedTorrent(matchingMagnet, out var fromCache) && fromCache?.Name == "fast-magnet-cache.bin");
     Require(FastTorrentDownload.Views.MainWindow.PendingTorrentName("magnet:?xt=urn:btih:24eb124f02db18c31e3e1fd33d8056e5cb0f054d&dn=Torrentio%0A1080p") == "Torrentio 1080p");
     Require(FastTorrentDownload.Views.MainWindow.PendingTorrentName("magnet:?xt=urn:btih:24eb124f02db18c31e3e1fd33d8056e5cb0f054d") == "Magnet link");

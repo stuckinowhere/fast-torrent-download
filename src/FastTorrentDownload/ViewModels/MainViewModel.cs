@@ -63,6 +63,12 @@ public sealed partial class MainViewModel(
     {
         _settings = await _settingsStore.LoadAsync();
         ApplyTheme(_settings.Theme);
+        if (_settings.StartWithWindows)
+        {
+            try { StartupRegistration.Apply(true); }
+            catch (Exception exception) { AppLogger.LogException("Startup entry refresh failed", exception); }
+        }
+
         await _engine.InitializeAsync(_settings);
         await RefreshAsync();
         StatusMessage = "Ready — add a magnet link or .torrent file.";

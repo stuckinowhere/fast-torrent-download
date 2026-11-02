@@ -62,16 +62,27 @@ public partial class MainWindow : Window
     {
         foreach (var source in sources)
         {
-            _externalSources.Enqueue(source);
+            Enqueue(source);
         }
+    }
+
+    private const int MaxQueuedExternalSources = 32;
+
+    private void Enqueue(string source)
+    {
+        if (_externalSources.Count >= MaxQueuedExternalSources)
+        {
+            _viewModel.StatusMessage = "Too many pending torrents; the latest one was ignored.";
+            return;
+        }
+
+        _externalSources.Enqueue(source);
     }
 
     /// <summary>A magnet click or .torrent open forwarded by a second instance.</summary>
     public void OpenExternalSource(string source)
     {
-        _externalSources.Enqueue(source);
-        Show();
-        Activate();
+        Enqueue(source);
         _ = DrainExternalSourcesAsync();
     }
 
@@ -87,6 +98,9 @@ public partial class MainWindow : Window
         {
             while (_externalSources.TryDequeue(out var source))
             {
+                // A confirmation dialog must never appear over a hidden tray-only window.
+                Show();
+                Activate();
                 _viewModel.IsSettingsOpen = false;
                 await AddTorrentAsync(new AddTorrentRequest(source, null, StartImmediately: true));
             }

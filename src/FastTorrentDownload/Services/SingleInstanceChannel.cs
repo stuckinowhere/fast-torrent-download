@@ -9,6 +9,9 @@ namespace FastTorrentDownload.Services;
 public sealed class SingleInstanceChannel : IDisposable
 {
     public const string DefaultPipeName = "WASD.FastTorrentDownload.sources";
+    // A launch hands over a handful of short strings; anything beyond this is not a client of ours.
+    public const int MaxSourcesPerConnection = 16;
+    public const int MaxSourceLength = 8 * 1024;
     private readonly string _pipeName;
     private readonly CancellationTokenSource _stop = new();
     private Task? _listener;
@@ -31,7 +34,8 @@ public sealed class SingleInstanceChannel : IDisposable
 
         try
         {
-            using var client = new NamedPipeClientStream(".", pipeName ?? DefaultPipeName, PipeDirection.Out);
+            // CurrentUserOnly on the client refuses a pipe server created by another account.
+            using var client = new NamedPipeClientStream(".", pipeName ?? DefaultPipeName, PipeDirection.Out, PipeOptions.CurrentUserOnly);
             client.Connect(timeout: 3000);
             using var writer = new StreamWriter(client);
             foreach (var source in sources)
@@ -64,10 +68,17 @@ public sealed class SingleInstanceChannel : IDisposable
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 await server.WaitForConnectionAsync(cancellationToken);
                 using var reader = new StreamReader(server);
-                while (await reader.ReadLineAsync(cancellationToken) is { } line)
+                var accepted = 0;
+                while (accepted < MaxSourcesPerConnection && await reader.ReadLineAsync(cancellationToken) is { } line)
                 {
+                    if (line.Length > MaxSourceLength)
+                    {
+                        continue;
+                    }
+
                     foreach (var source in ExtractSources([line]))
                     {
+                        accepted++;
                         onSource(source);
                     }
                 }
