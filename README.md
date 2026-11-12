@@ -11,6 +11,7 @@ A local-first Windows 11 x64 BitTorrent client built with Avalonia and MonoTorre
 - Add a user-provided magnet link or `.torrent` file to a chosen download folder. The installer can register the app for `magnet:` links and `.torrent` files; a second launch hands its link to the running window.
 - Select or deselect individual files before starting a torrent, and change that selection later from the row's **Files…** button. **Move…** relocates a torrent's files to another folder.
 - Every row carries its own Resume/Pause, Recheck, Files, Move, Show folder and Remove actions; removing keeps downloaded files.
+- **Trackers…** adds trackers to a queued torrent (kept across restarts). **Delete files…** asks first, then removes the torrent and its downloaded files; plain **Remove** keeps them.
 - Optional "maximum active downloads": extra torrents wait as *Queued* and start automatically when a slot frees up. Duplicate adds are rejected with a clear message.
 - Persist confirmed additions and removals immediately; restore the selected files, pause intent and actual download folder from `%LocalAppData%\\fast-torrent-download`.
 - Pause and remove with per-torrent progress feedback and a bounded tracker-stop announce wait, while other rows keep updating.
@@ -57,10 +58,10 @@ Use `--ui-smoke` instead for manual inspection, or `--ui-shots <folder>` to rend
 On Windows with Inno Setup installed, run:
 
 ```powershell
-.\\scripts\\Publish.ps1 -Version 0.6.0
+.\\scripts\\Publish.ps1 -Version 0.6.2
 ```
 
-It creates a self-contained Windows x64 portable ZIP, an SHA-256 checksum file, and a per-user installer under `artifacts\\`. The installer is intentionally unsigned: publish the checksum beside it and expect Microsoft SmartScreen to show a reputation warning for early releases. Only the installer registers the `magnet:` protocol and `.torrent` association (both optional tasks, per-user, removed on uninstall); the portable ZIP does not touch the registry.
+It creates a self-contained Windows x64 portable ZIP, an SHA-256 checksum file, and a per-user installer under `artifacts\\`. The installer is intentionally unsigned: publish the checksum beside it and expect Microsoft SmartScreen to show a reputation warning for early releases. Release files carry a GitHub build-provenance attestation: `gh attestation verify <file> --repo stuckinowhere/fast-torrent-download` confirms a file was built by this repository's release workflow. Only the installer registers the `magnet:` protocol and `.torrent` association (both optional tasks, per-user, removed on uninstall); the portable ZIP does not touch the registry.
 
 Pushing a `v*` tag runs the corresponding GitHub Actions release workflow.
 
