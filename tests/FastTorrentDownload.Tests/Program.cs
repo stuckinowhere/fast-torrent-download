@@ -276,6 +276,46 @@ Check("a download with no payload is reported as stalled with the reason and bac
     Require(row.DetailLabel.Contains("No seeders in the swarm") && !row.DetailLabel.Contains("ETA"));
 });
 
+Check("tracker input, release tags and remote paths are validated before use", () =>
+{
+    var (accepted, rejected) = TorrentEngineService.ParseTrackerUrls(
+        "udp://tracker.example.org:1337/announce\nhttps://t.example.net/announce, udp://tracker.example.org:1337/announce ftp://x/announce notaurl magnet:?xt=urn:btih:abc");
+    Require(accepted.Select(uri => uri.AbsoluteUri).SequenceEqual(["udp://tracker.example.org:1337/announce", "https://t.example.net/announce"]));
+    Require(rejected.SequenceEqual(["ftp://x/announce", "notaurl", "magnet:?xt=urn:btih:abc"]));
+    Require(TorrentEngineService.ParseTrackerUrls(null).Accepted.Count == 0);
+    Require(TorrentEngineService.ParseTrackerUrls(string.Join(' ', Enumerable.Range(0, 80).Select(i => $"udp://t{i}.example.org:1/announce"))).Accepted.Count == TorrentEngineService.MaxExtraTrackersPerTorrent);
+    Require(AppUpdateService.IsSafeTag("v0.6.1") && AppUpdateService.IsSafeTag("1.2.3.4") && AppUpdateService.IsSafeTag("V10.20.30"));
+    Require(!AppUpdateService.IsSafeTag("v1.0.0\"; calc") && AppUpdateService.IsSafeTag("1.0"));
+    Require(!AppUpdateService.IsSafeTag("v1") && !AppUpdateService.IsSafeTag("1.0.0-beta") && !AppUpdateService.IsSafeTag(" 1.0.0") && !AppUpdateService.IsSafeTag("..\\1.0.0") && !AppUpdateService.IsSafeTag(null));
+    Require(PathGuard.IsRemoteOrDevicePath(@"\\nas\share\a.torrent") && PathGuard.IsRemoteOrDevicePath(@"  \\?\C:\a.torrent") && PathGuard.IsRemoteOrDevicePath("//nas/share/a.torrent"));
+    Require(!PathGuard.IsRemoteOrDevicePath(@"C:\Downloads\a.torrent") && !PathGuard.IsRemoteOrDevicePath("magnet:?xt=urn:btih:abc") && !PathGuard.IsRemoteOrDevicePath(null));
+});
+
+Check("deleting downloaded files stays inside the save folder and removes the folders it empties", () =>
+{
+    var root = Path.Combine(Path.GetTempPath(), "fast-torrent-delete-" + Guid.NewGuid().ToString("N"));
+    var save = Path.Combine(root, "downloads");
+    var outside = Path.Combine(root, "outside.bin");
+    try
+    {
+        Directory.CreateDirectory(Path.Combine(save, "show", "season 1"));
+        var episode = Path.Combine(save, "show", "season 1", "e1.mkv");
+        var notes = Path.Combine(save, "show", "notes.txt");
+        var keeper = Path.Combine(save, "other-download.bin");
+        foreach (var file in new[] { episode, notes, keeper, outside }) File.WriteAllText(file, "x");
+        Require(PathGuard.IsInsideFolder(save, episode) && !PathGuard.IsInsideFolder(save, outside) && !PathGuard.IsInsideFolder(save, save));
+        Require(!PathGuard.IsInsideFolder(save, Path.Combine(save, "..", "outside.bin")));
+        var deleted = TorrentEngineService.DeleteDownloadedFiles(save, [episode, notes, outside, Path.Combine(save, "..", "outside.bin"), Path.Combine(save, "show", "missing.bin")]);
+        Require(deleted == 2 && !File.Exists(episode) && !File.Exists(notes));
+        Require(File.Exists(outside) && File.Exists(keeper));
+        Require(!Directory.Exists(Path.Combine(save, "show")) && Directory.Exists(save));
+    }
+    finally
+    {
+        try { Directory.Delete(root, recursive: true); } catch { }
+    }
+});
+
 Check("second-instance sources are filtered to magnets and torrent files", () =>
 {
     var sources = SingleInstanceChannel.ExtractSources(["--minimized", " magnet:?xt=urn:btih:abc ", @"C:\x\file.torrent", "notes.txt", ""]);
@@ -351,7 +391,8 @@ await CheckSingleInstanceForwardingAsync();
 await CheckFileSelectionDuplicateAndQueueAsync();
 await CheckStalledTorrentFreesQueueSlotAsync();
 await CheckDeadSwarmIsNamedFromTrackerScrapeAsync();
-passed += 5;
+await CheckTrackersPersistDeleteFilesAndCorruptStateAsync();
+passed += 6;
 await CheckCompletedRemovalAsync(selectedOnly: true);
 await CheckCompletedRemovalAsync(selectedOnly: false);
 await CheckCompletedRemovalAsync(selectedOnly: true, manualRemoval: true);
@@ -845,6 +886,94 @@ static async Task CheckDeadSwarmIsNamedFromTrackerScrapeAsync()
         catch (OperationCanceledException) { }
         catch (SocketException) when (stop.IsCancellationRequested) { }
         catch (IOException) when (stop.IsCancellationRequested) { }
+    }
+}
+
+static async Task CheckTrackersPersistDeleteFilesAndCorruptStateAsync()
+{
+    var root = Path.Combine(Path.GetTempPath(), "fast-torrent-followups-" + Guid.NewGuid().ToString("N"));
+    var paths = new AppPaths(Path.Combine(root, "app-state"));
+    paths.EnsureDirectories();
+    var destination = Path.Combine(root, "payload");
+    try
+    {
+        var data = new byte[16_384];
+        var hash = SHA1.HashData(data);
+        var torrent = new BEncodedDictionary
+        {
+            ["info"] = new BEncodedDictionary
+            {
+                ["name"] = new BEncodedString("followups"),
+                ["piece length"] = new BEncodedNumber(data.Length),
+                ["pieces"] = new BEncodedString(hash.Concat(hash).ToArray()),
+                ["files"] = new BEncodedList
+                {
+                    new BEncodedDictionary { ["length"] = new BEncodedNumber(data.Length), ["path"] = new BEncodedList { new BEncodedString("a.bin") } },
+                    new BEncodedDictionary { ["length"] = new BEncodedNumber(data.Length), ["path"] = new BEncodedList { new BEncodedString("sub"), new BEncodedString("b.bin") } }
+                }
+            }
+        };
+        var source = Path.Combine(root, "followups.torrent");
+        await File.WriteAllBytesAsync(source, torrent.Encode());
+        var tracker = new Uri("udp://127.0.0.1:9/announce");
+        string[] payloadFiles;
+        using (var engine = new ClientEngine(new EngineSettingsBuilder
+        {
+            CacheDirectory = paths.CacheDirectory, DhtEndPoint = null, AllowPortForwarding = false,
+            AllowLocalPeerDiscovery = false, ListenEndPoints = new Dictionary<string, IPEndPoint>()
+        }.ToSettings()))
+        {
+            var service = new TorrentEngineService(paths);
+            typeof(TorrentEngineService).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(service, engine);
+            var preview = await service.PrepareAddAsync(source, destination);
+            await service.CommitAddAsync(preview, ["a.bin", "sub/b.bin", Path.Combine("sub", "b.bin")], startImmediately: false);
+            Require(await service.AddTrackersAsync(preview.Id, [tracker]) == 1);
+            Require(await service.AddTrackersAsync(preview.Id, [tracker]) == 0);
+            var saved = BEncodedValue.Decode<BEncodedDictionary>(await File.ReadAllBytesAsync(paths.EngineStateFile));
+            var recorded = ((BEncodedDictionary)saved["ExtraTrackers"]).Values.Cast<BEncodedList>().Single();
+            Require(recorded.Cast<BEncodedString>().Single().Text == tracker.AbsoluteUri);
+            payloadFiles = engine.Torrents.Single().Files.Select(file => file.FullPath).ToArray();
+        }
+
+        using var port = new TcpListener(IPAddress.Loopback, 0);
+        port.Start();
+        var listenPort = ((IPEndPoint)port.LocalEndpoint).Port;
+        port.Stop();
+        var offline = new AppSettings { ListenPort = listenPort, ListenAddress = "127.0.0.1", EnableDht = false, EnablePeerExchange = false, EnableLocalPeerDiscovery = false, EnablePortForwarding = false };
+        await using (var reopened = new TorrentEngineService(paths))
+        {
+            await reopened.InitializeAsync(offline);
+            Require(reopened.RestoreWarnings.Count == 0);
+            var restored = (await reopened.GetSnapshotsAsync()).Single();
+            // The added tracker survives the restart, and a queue that records trackers gets no public rescue set.
+            Require(restored.Diagnostics!.Trackers.Select(item => item.Address).SequenceEqual(["udp://127.0.0.1:9"]));
+            foreach (var file in payloadFiles)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                await File.WriteAllBytesAsync(file, data);
+            }
+            var bystander = Path.Combine(destination, "bystander.bin");
+            await File.WriteAllBytesAsync(bystander, data);
+            await reopened.RemoveAsync(restored.Id, deleteFiles: true);
+            Require(payloadFiles.All(file => !File.Exists(file)) && File.Exists(bystander) && Directory.Exists(destination));
+            Require(!Directory.Exists(Path.Combine(destination, "followups")));
+            Require((await reopened.GetSnapshotsAsync()).Count == 0);
+        }
+
+        // A state file that cannot be parsed must not stop the app; it is set aside, not overwritten silently.
+        await File.WriteAllTextAsync(paths.EngineStateFile, "d8:Torrentsli1ei2ee16:PausedInfoHashesi7ee");
+        await using (var recovered = new TorrentEngineService(paths))
+        {
+            await recovered.InitializeAsync(offline);
+            Require((await recovered.GetSnapshotsAsync()).Count == 0);
+            Require(recovered.RestoreWarnings.Count == 1 && recovered.RestoreWarnings[0].Contains("set aside"));
+            Require(File.Exists(paths.EngineStateFile + ".corrupt"));
+        }
+        Console.WriteLine("PASS added trackers persist across restart, delete-with-files stays in the save folder, and an unreadable state file is set aside");
+    }
+    finally
+    {
+        try { Directory.Delete(root, recursive: true); } catch { }
     }
 }
 

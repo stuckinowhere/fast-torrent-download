@@ -66,6 +66,12 @@
       <Setter Property="MinHeight" Value="44" />
       <Setter Property="CornerRadius" Value="0" />
     </Style>
+    <!-- Destructive confirmation: the one place a button carries the error hue. -->
+    <Style Selector="Button.danger">
+      <Setter Property="Background" Value="{DynamicResource ErrorForegroundBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ErrorForegroundBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource WindowBackgroundBrush}" />
+    </Style>
     <Style Selector="Button.header-button">
       <Setter Property="Foreground" Value="{DynamicResource HeaderForegroundBrush}" />
       <Setter Property="BorderBrush" Value="{DynamicResource HeaderForegroundBrush}" />

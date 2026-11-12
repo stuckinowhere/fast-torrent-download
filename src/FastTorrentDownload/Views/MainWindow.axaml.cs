@@ -139,6 +139,12 @@ public partial class MainWindow : Window
                 return;
             }
 
+            if (Services.PathGuard.IsRemoteOrDevicePath(text))
+            {
+                _viewModel.StatusMessage = "Network paths are not opened from pasted text. Use “+ Add torrent” and browse to the file.";
+                return;
+            }
+
             e.Handled = true;
             await AddTorrentAsync(new AddTorrentRequest(text, null, StartImmediately: true));
         }
@@ -166,6 +172,13 @@ public partial class MainWindow : Window
             if (!IsTorrentSource(trimmed))
             {
                 _viewModel.StatusMessage = "Drop a .torrent file here, or add a magnet link.";
+                return;
+            }
+
+            // A dragged file is the user's pick; dragged text naming a share is not.
+            if (string.IsNullOrWhiteSpace(path) && Services.PathGuard.IsRemoteOrDevicePath(trimmed))
+            {
+                _viewModel.StatusMessage = "Network paths are not opened from dropped text. Use “+ Add torrent” and browse to the file.";
                 return;
             }
 
@@ -277,6 +290,42 @@ public partial class MainWindow : Window
     private async void RowRecheck_Click(object? sender, RoutedEventArgs eventArgs) => await RunRowActionAsync(sender, _viewModel.RecheckTorrentAsync);
     private async void RowRemove_Click(object? sender, RoutedEventArgs eventArgs) => await RunRowActionAsync(sender, _viewModel.RemoveTorrentAsync);
     private void RowFolder_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.OpenTorrentFolder(RowOf(sender));
+
+    private async void RowTrackers_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        if (RowOf(sender) is not { } row)
+        {
+            return;
+        }
+
+        _viewModel.SelectedTorrent = row;
+        await RunActionAsync(async () =>
+        {
+            var text = await new TrackersWindow(row.Name, row.Trackers) { Icon = Icon }.ShowDialog<string?>(this);
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                await _viewModel.AddTrackersAsync(row.Id, text);
+            }
+        });
+    }
+
+    private async void RowDelete_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        if (RowOf(sender) is not { } row)
+        {
+            return;
+        }
+
+        _viewModel.SelectedTorrent = row;
+        await RunActionAsync(async () =>
+        {
+            var confirmed = await new DeleteFilesWindow(row.Name, row.Destination, row.VerifiedSizeLabel) { Icon = Icon }.ShowDialog<bool>(this);
+            if (confirmed)
+            {
+                await _viewModel.DeleteTorrentAsync(row.Id);
+            }
+        });
+    }
 
     private void RowDetails_Click(object? sender, RoutedEventArgs eventArgs)
     {

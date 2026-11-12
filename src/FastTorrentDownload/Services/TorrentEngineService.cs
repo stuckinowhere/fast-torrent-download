@@ -30,6 +30,12 @@ public sealed class TorrentEngineService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, (DateTimeOffset At, TorrentDiagnostics Value)> _diagnosticsCache = new();
     // Torrents that want to run but wait for a free slot under MaximumActiveDownloads.
     private readonly HashSet<string> _queuedHashes = new(StringComparer.OrdinalIgnoreCase);
+    // Trackers added after the torrent was created (public defaults and user additions), keyed by
+    // info-hash. MonoTorrent restores only the magnet's own trackers, so these are persisted here.
+    private readonly Dictionary<string, HashSet<string>> _extraTrackers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _restoreWarnings = [];
+    private bool _stateRecordsTrackers;
+    public const int MaxExtraTrackersPerTorrent = 50;
     public static TimeSpan StopAnnounceTimeout { get; } = TimeSpan.FromSeconds(2);
     private const int MaxCachedTorrentBytes = 10 * 1024 * 1024;
     // Peer enumeration and piece-coverage math run per torrent; refreshing them every second
@@ -73,12 +79,33 @@ public sealed class TorrentEngineService : IAsyncDisposable
                     if (saved.TryGetValue("PausedInfoHashes", out var paused) && paused is BEncodedList hashes)
                     {
                         _pausedHashes.Clear();
-                        _pausedHashes.UnionWith(hashes.Cast<BEncodedString>().Select(hash => hash.Text));
+                        _pausedHashes.UnionWith(hashes.OfType<BEncodedString>().Select(hash => hash.Text));
+                    }
+
+                    _stateRecordsTrackers = saved.ContainsKey("ExtraTrackers");
+                    if (saved.TryGetValue("ExtraTrackers", out var extra) && extra is BEncodedDictionary byHash)
+                    {
+                        foreach (var pair in byHash)
+                        {
+                            if (pair.Value is BEncodedList urls)
+                            {
+                                _extraTrackers[pair.Key.Text] = urls.OfType<BEncodedString>().Select(url => url.Text)
+                                    .Take(MaxExtraTrackersPerTorrent).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                            }
+                        }
                     }
                 }
                 catch (Exception exception) when (IsRecoverableStateException(exception))
                 {
-                    // A corrupt or incompatible cache must never prevent the client from opening.
+                    // A corrupt or incompatible state file must never prevent the client from opening.
+                    // Keep a copy: the next save would otherwise overwrite the only record of the queue.
+                    AppLogger.LogException("Saved queue could not be restored", exception);
+                    if (_engine is null)
+                    {
+                        _restoreWarnings.Add("The saved queue could not be read and was set aside as engine-state.json.corrupt. The queue starts empty; downloaded files are untouched.");
+                        try { File.Copy(_paths.EngineStateFile, _paths.EngineStateFile + ".corrupt", overwrite: true); }
+                        catch (Exception copyFailure) when (copyFailure is IOException or UnauthorizedAccessException) { }
+                    }
                 }
             }
 
@@ -86,11 +113,23 @@ public sealed class TorrentEngineService : IAsyncDisposable
             await _engine.UpdateSettingsAsync(CreateEngineSettings(_settings));
             AppLogger.Log($"Engine initialized: listen={_settings.ListenAddress}:{_settings.ListenPort} dht={_settings.EnableDht} pex={_settings.EnablePeerExchange} lpd={_settings.EnableLocalPeerDiscovery} upnp={_settings.EnablePortForwarding} restored={_engine.Torrents.Count} dhtState={_engine.Dht.State} dhtNodes={_engine.Dht.NodeCount} tuning={EnginePerformanceTuning.MaxConnections}c/{EnginePerformanceTuning.MaxHalfOpenConnections}half/{EnginePerformanceTuning.MaxConnectionsPerTorrent}pt");
 
-            foreach (var manager in _engine.Torrents)
+            foreach (var manager in _engine.Torrents.ToList())
             {
+                // The state file is plain data on disk: its paths get the same containment check as a new add.
+                if (!IsSafeRestoredTorrent(manager))
+                {
+                    var name = SanitizeDisplayName(manager.Name);
+                    AppLogger.Log("Restored torrent rejected: saved file paths leave the download folder.");
+                    _restoreWarnings.Add($"“{name}” was not restored: its saved file paths point outside its download folder.");
+                    _extraTrackers.Remove(DescribeInfoHashes(manager.InfoHashes));
+                    await _engine.RemoveAsync(manager);
+                    continue;
+                }
+
                 Track(manager, manager.SavePath);
                 await manager.UpdateSettingsAsync(CreateTorrentSettings(_settings));
                 await UpgradeLegacyTrackersAsync(manager);
+                await RestoreExtraTrackersAsync(manager);
                 await SplitTrackerTiersAsync(manager);
             }
 
@@ -380,6 +419,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
 
         await SeedDefaultTrackersAsync(manager);
+        RememberTrackers(manager, DefaultPublicTrackers.Select(uri => uri.AbsoluteUri));
         await SplitTrackerTiersAsync(manager);
         return manager;
     }
@@ -744,6 +784,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             var engine = RequireEngine();
             if (_pending.Remove(id, out var pending))
             {
+                _extraTrackers.Remove(DescribeInfoHashes(pending.Manager.InfoHashes));
                 await engine.RemoveAsync(pending.Manager);
             }
         }
@@ -754,6 +795,119 @@ public sealed class TorrentEngineService : IAsyncDisposable
     }
 
     public IReadOnlySet<string> PausedInfoHashes => _pausedHashes;
+
+    /// <summary>Problems found while restoring the saved queue; shown once after startup.</summary>
+    public IReadOnlyList<string> RestoreWarnings => _restoreWarnings;
+
+    private static bool IsSafeRestoredTorrent(TorrentManager manager) =>
+        manager.Files.Count == 0 ||
+        manager.Files.Select(file => file.Path).Prepend(manager.Name).All(path => PathGuard.IsSafeTorrentFilePath(manager.SavePath, path));
+
+    // Caller holds _gate.
+    private void RememberTrackers(TorrentManager manager, IEnumerable<string> urls)
+    {
+        var hash = DescribeInfoHashes(manager.InfoHashes);
+        if (!_extraTrackers.TryGetValue(hash, out var known))
+        {
+            _extraTrackers[hash] = known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        foreach (var url in urls)
+        {
+            if (known.Count >= MaxExtraTrackersPerTorrent) break;
+            known.Add(url);
+        }
+    }
+
+    private async Task RestoreExtraTrackersAsync(TorrentManager manager)
+    {
+        var hash = DescribeInfoHashes(manager.InfoHashes);
+        if (!_extraTrackers.TryGetValue(hash, out var recorded))
+        {
+            // Queues saved before trackers were persisted: a torrent left with a single tracker
+            // gets the same public rescue set a new magnet does.
+            if (!_stateRecordsTrackers && CountTrackers(manager) < 2)
+            {
+                await SeedDefaultTrackersAsync(manager);
+                RememberTrackers(manager, DefaultPublicTrackers.Select(uri => uri.AbsoluteUri));
+            }
+
+            return;
+        }
+
+        var existing = manager.TrackerManager.Tiers.SelectMany(tier => tier.Trackers).Select(tracker => tracker.Uri).ToHashSet();
+        foreach (var url in recorded)
+        {
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && existing.Add(uri))
+            {
+                try { await manager.TrackerManager.AddTrackerAsync(uri); }
+                catch (Exception exception) { AppLogger.Log($"Saved tracker skipped ({exception.GetType().Name})."); }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Splits pasted text into tracker URLs. Only udp/http/https announce URLs with a host are
+    /// accepted; everything else is returned as rejected so the dialog can say what was ignored.
+    /// </summary>
+    public static (IReadOnlyList<Uri> Accepted, IReadOnlyList<string> Rejected) ParseTrackerUrls(string? text)
+    {
+        var accepted = new List<Uri>();
+        var rejected = new List<string>();
+        foreach (var token in (text ?? string.Empty).Split([' ', '\t', '\r', '\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (token.Length <= 2048 && Uri.TryCreate(token, UriKind.Absolute, out var uri) &&
+                uri.Scheme is "udp" or "http" or "https" && !string.IsNullOrWhiteSpace(uri.Host))
+            {
+                if (!accepted.Contains(uri) && accepted.Count < MaxExtraTrackersPerTorrent) accepted.Add(uri);
+            }
+            else
+            {
+                rejected.Add(token.Length > 80 ? token[..80] + "…" : token);
+            }
+        }
+
+        return (accepted, rejected);
+    }
+
+    /// <summary>Adds trackers to a queued torrent, announces to them and persists them. Returns how many were new.</summary>
+    public async Task<int> AddTrackersAsync(string id, IReadOnlyCollection<Uri> trackers)
+    {
+        var added = 0;
+        TorrentManager manager;
+        await _gate.WaitAsync();
+        try
+        {
+            manager = Find(id);
+            var existing = manager.TrackerManager.Tiers.SelectMany(tier => tier.Trackers).Select(tracker => tracker.Uri).ToHashSet();
+            var fresh = new List<string>();
+            foreach (var uri in trackers)
+            {
+                if (!existing.Add(uri)) continue;
+                await manager.TrackerManager.AddTrackerAsync(uri);
+                fresh.Add(uri.AbsoluteUri);
+                added++;
+            }
+
+            if (added > 0)
+            {
+                RememberTrackers(manager, fresh);
+                await SaveStateAsync();
+                _lastScrape.TryRemove(id, out _);
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        if (added > 0 && manager.State is TorrentState.Downloading or TorrentState.Seeding or TorrentState.Metadata)
+        {
+            _ = TriggerImmediateAnnouncesAsync(manager);
+        }
+
+        return added;
+    }
 
     public Task StartAsync(string id) => RunOperationAsync(id, "Starting…", async manager =>
     {
@@ -794,7 +948,8 @@ public sealed class TorrentEngineService : IAsyncDisposable
         finally { _gate.Release(); }
     }
 
-    public Task RemoveAsync(string id) => RunOperationAsync(id, "Stopping…", manager => RemoveCoreAsync(id, manager));
+    public Task RemoveAsync(string id, bool deleteFiles = false) =>
+        RunOperationAsync(id, "Stopping…", manager => RemoveCoreAsync(id, manager, deleteFiles));
 
     private async Task RunOperationAsync(string id, string operation, Func<TorrentManager, Task> action)
     {
@@ -816,8 +971,18 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 if (_entries.ContainsKey(id) && File.Exists(_paths.EngineStateFile))
                 {
                     // Persist intent without forcing fast-resume writes during Starting / Hashing.
-                    var state = BEncodedValue.Decode<BEncodedDictionary>(await File.ReadAllBytesAsync(_paths.EngineStateFile));
-                    await WriteStateAsync(state);
+                    BEncodedDictionary? state = null;
+                    try
+                    {
+                        state = BEncodedValue.Decode<BEncodedDictionary>(await File.ReadAllBytesAsync(_paths.EngineStateFile));
+                    }
+                    catch (Exception exception) when (IsRecoverableStateException(exception))
+                    {
+                        // An unreadable state file is rebuilt from the live engine below.
+                    }
+
+                    if (state is null) await SaveStateAsync();
+                    else await WriteStateAsync(state);
                 }
             }
             finally { _gate.Release(); }
@@ -828,9 +993,11 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    private async Task RemoveCoreAsync(string id, TorrentManager manager)
+    private async Task RemoveCoreAsync(string id, TorrentManager manager, bool deleteFiles = false)
     {
         await manager.StopAsync(StopAnnounceTimeout);
+        var savePath = manager.SavePath;
+        var payloadFiles = manager.Files.Select(file => file.FullPath).ToArray();
         await _gate.WaitAsync();
         try
         {
@@ -847,6 +1014,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             var hash = DescribeInfoHashes(entry.Manager.InfoHashes);
             _pausedHashes.Remove(hash);
             _queuedHashes.Remove(hash);
+            _extraTrackers.Remove(hash);
             _completionErrors.TryRemove(id, out _);
             _lastReannounce.TryRemove(id, out _);
             _lastScrape.TryRemove(id, out _);
@@ -858,6 +1026,62 @@ public sealed class TorrentEngineService : IAsyncDisposable
         {
             _gate.Release();
         }
+
+        if (deleteFiles)
+        {
+            var deleted = DeleteDownloadedFiles(savePath, payloadFiles);
+            AppLogger.Log($"Removed torrent and deleted {deleted} of {payloadFiles.Length} payload file(s).");
+        }
+    }
+
+    /// <summary>
+    /// Deletes a removed torrent's payload files and the folders they leave empty. Only paths
+    /// inside <paramref name="savePath"/> are touched, and the save folder itself is never removed.
+    /// </summary>
+    public static int DeleteDownloadedFiles(string savePath, IReadOnlyCollection<string> files)
+    {
+        var deleted = 0;
+        var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in files)
+        {
+            if (!PathGuard.IsInsideFolder(savePath, file)) continue;
+            try
+            {
+                if (File.Exists(file))
+                {
+                    File.Delete(file);
+                    deleted++;
+                }
+
+                for (var folder = Path.GetDirectoryName(Path.GetFullPath(file));
+                     folder is not null && PathGuard.IsInsideFolder(savePath, folder);
+                     folder = Path.GetDirectoryName(folder))
+                {
+                    folders.Add(folder);
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                AppLogger.Log($"Could not delete a payload file ({exception.GetType().Name}).");
+            }
+        }
+
+        // Deepest first, so a parent is empty by the time it is tried.
+        foreach (var folder in folders.OrderByDescending(folder => folder.Length))
+        {
+            try
+            {
+                if (Directory.Exists(folder) && !Directory.EnumerateFileSystemEntries(folder).Any())
+                {
+                    Directory.Delete(folder);
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+
+        return deleted;
     }
 
     public async Task ApplySettingsAsync(AppSettings settings)
@@ -1245,6 +1469,14 @@ public sealed class TorrentEngineService : IAsyncDisposable
     private async Task WriteStateAsync(BEncodedDictionary state, string? excludedHash = null)
     {
         state["PausedInfoHashes"] = new BEncodedList(_pausedHashes.Where(hash => hash != excludedHash).Select(hash => (BEncodedValue)new BEncodedString(hash)));
+        var committed = _entries.Values.Select(entry => DescribeInfoHashes(entry.Manager.InfoHashes)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var extraTrackers = new BEncodedDictionary();
+        foreach (var pair in _extraTrackers.Where(pair => pair.Key != excludedHash && committed.Contains(pair.Key)))
+        {
+            extraTrackers[pair.Key] = new BEncodedList(pair.Value.Select(url => (BEncodedValue)new BEncodedString(url)));
+        }
+
+        state["ExtraTrackers"] = extraTrackers;
         var temporaryFile = $"{_paths.EngineStateFile}.{Guid.NewGuid():N}.tmp";
         try
         {
@@ -1303,7 +1535,10 @@ public sealed class TorrentEngineService : IAsyncDisposable
         kibPerSecond <= 0 ? 0 : checked(kibPerSecond * 1024);
 
     private static bool IsRecoverableStateException(Exception exception) =>
-        exception is IOException or InvalidDataException or ArgumentException or System.Text.Json.JsonException;
+        exception is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException
+            or FormatException or InvalidCastException or KeyNotFoundException or NullReferenceException
+            or IndexOutOfRangeException or OverflowException or System.Text.Json.JsonException
+            or BEncodingException or TorrentException;
 
     private void Track(TorrentManager manager, string destination)
     {

@@ -79,8 +79,12 @@
                     <Button Classes="row-action quiet" Content="Recheck" Click="RowRecheck_Click" IsEnabled="{Binding CanAct}" />
                     <Button Classes="row-action quiet" Content="Files…" Click="RowFiles_Click" IsEnabled="{Binding CanAct}" />
                     <Button Classes="row-action quiet" Content="Move…" Click="RowMove_Click" IsEnabled="{Binding CanAct}" />
+                    <Button Classes="row-action quiet" Content="Trackers…" Click="RowTrackers_Click" IsEnabled="{Binding CanAct}" />
                     <Button Classes="row-action quiet" Content="Show folder" Click="RowFolder_Click" />
-                    <Button Classes="row-action quiet" Content="Remove" Click="RowRemove_Click" IsEnabled="{Binding CanAct}" />
+                    <Button Classes="row-action quiet" Content="Remove" Click="RowRemove_Click" IsEnabled="{Binding CanAct}"
+                            ToolTip.Tip="Remove from the queue and keep the downloaded files" />
+                    <Button Classes="row-action quiet" Content="Delete files…" Click="RowDelete_Click" IsEnabled="{Binding CanAct}"
+                            ToolTip.Tip="Remove from the queue and delete the downloaded files" />
                   </WrapPanel>
                   <Button Grid.Column="1" Classes="row-action quiet" Content="{Binding DetailsToggleLabel}" Click="RowDetails_Click" VerticalAlignment="Top" />
                 </Grid>
