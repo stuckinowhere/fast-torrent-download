@@ -11,6 +11,11 @@ using System.Security.Cryptography;
 using System.Net.Sockets;
 using System.Diagnostics;
 
+if (Array.IndexOf(args, "--ui-shots") is var shotsIndex and >= 0)
+{
+    UiSmoke.ShotsDirectory = Path.GetFullPath(args.ElementAtOrDefault(shotsIndex + 1) ?? "ui-shots");
+    return UiSmoke.Run();
+}
 if (args.Contains("--ui-smoke") || args.Contains("--ui-smoke-auto")) return UiSmoke.Run(args.Contains("--ui-smoke-auto"));
 
 var passed = 0;

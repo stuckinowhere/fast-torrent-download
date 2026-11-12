@@ -32,6 +32,7 @@ internal static class UiSmoke
                 Console.WriteLine($"Isolated UI verification data: {paths.SettingsFile}");
                 var builder = AppBuilder.Configure(() => new FastTorrentDownload.App(paths, PipeName)).UsePlatformDetect();
                 if (automated) builder.AfterSetup(_ => Dispatcher.UIThread.Post(async () => await VerifyAsync()));
+                if (ShotsDirectory is { } shots) builder.AfterSetup(_ => Dispatcher.UIThread.Post(async () => await CaptureAsync(shots)));
                 result = builder.StartWithClassicDesktopLifetime([]);
             }
             catch (Exception exception) { failure = exception; }
@@ -41,6 +42,57 @@ internal static class UiSmoke
         thread.Join();
         if (failure is not null) throw failure;
         return result;
+    }
+
+    /// <summary>Set by <c>--ui-shots &lt;dir&gt;</c>: render the fixture UI to PNG files for design review.</summary>
+    public static string? ShotsDirectory { get; set; }
+
+    private static async Task CaptureAsync(string directory)
+    {
+        var desktop = (IClassicDesktopStyleApplicationLifetime)Application.Current!.ApplicationLifetime!;
+        try
+        {
+            Directory.CreateDirectory(directory);
+            await Task.Delay(700);
+            var main = (MainWindow)desktop.MainWindow!;
+            var viewModel = (MainViewModel)main.DataContext!;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            while (viewModel.Torrents.Count != 2) await Task.Delay(50, timeout.Token);
+            foreach (var update in main.OwnedWindows.OfType<UpdateAvailableWindow>().ToArray()) update.Close();
+            async Task ShotAsync(string name)
+            {
+                await Task.Delay(350);
+                var size = new PixelSize((int)main.ClientSize.Width, (int)main.ClientSize.Height);
+                using var bitmap = new Avalonia.Media.Imaging.RenderTargetBitmap(size, new Vector(96, 96));
+                bitmap.Render(main);
+                bitmap.Save(Path.Combine(directory, name + ".png"), new Avalonia.Media.Imaging.PngBitmapEncoderOptions());
+            }
+
+            await ShotAsync("queue-dark");
+            viewModel.SelectedTorrent = viewModel.Torrents[0];
+            viewModel.Torrents[0].IsDetailsOpen = true;
+            await ShotAsync("queue-dark-expanded");
+            viewModel.Torrents[0].IsDetailsOpen = false;
+            viewModel.SetTheme("Light");
+            await ShotAsync("queue-light");
+            main.Width = 880;
+            main.Height = 600;
+            await ShotAsync("queue-light-min");
+            main.Width = 1180;
+            main.Height = 760;
+            main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Settings"))
+                .RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            await ShotAsync("settings-light");
+            viewModel.SetTheme("Dark");
+            await ShotAsync("settings-dark");
+            Console.WriteLine($"Saved UI captures to {directory}");
+            main.RequestExit();
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception);
+            desktop.Shutdown(1);
+        }
     }
 
     private static async Task VerifyAsync()
@@ -62,7 +114,7 @@ internal static class UiSmoke
             // Per-row actions need no selection step: a stopped row offers Resume and hides Pause.
             Require(RowButton(row, "Resume").IsVisible && RowButton(row, "Resume").IsEnabled && !RowButton(row, "Pause").IsVisible, "A stopped row must offer Resume directly.");
             Require(RowButton(row, "Files…").IsEnabled && RowButton(row, "Move…").IsEnabled && RowButton(row, "Remove").IsEnabled, "Row actions must be enabled while idle.");
-            main.GetVisualDescendants().OfType<Expander>().First().IsExpanded = true;
+            viewModel.Torrents[0].IsDetailsOpen = true;
             await Task.Delay(100);
             Require(row.Progress == 50 && row.DetailLabel.Contains("verified") && row.DiagnosticsText.Contains("Piece coverage"), "Selection metrics and diagnostics are missing.");
 
@@ -84,7 +136,7 @@ internal static class UiSmoke
             await VerifyAddDialogsAsync(main);
 
             // Collapse the long diagnostics panel so the virtualized second row is realized again.
-            main.GetVisualDescendants().OfType<Expander>().First().IsExpanded = false;
+            viewModel.Torrents[0].IsDetailsOpen = false;
             var completed = viewModel.Torrents.Single(row => row.Name == "Completed example");
             main.GetVisualDescendants().OfType<ListBox>().First().ScrollIntoView(completed);
             await Task.Delay(150);

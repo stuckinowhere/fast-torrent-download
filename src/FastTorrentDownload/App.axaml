@@ -13,6 +13,13 @@
           <SolidColorBrush x:Key="PrimaryButtonBackgroundBrush" Color="#101010" />
           <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#FFFFFF" />
           <SolidColorBrush x:Key="ErrorForegroundBrush" Color="#C62828" />
+          <!-- The identity is monochrome: ink carries progress and selection; hue is reserved for state. -->
+          <SolidColorBrush x:Key="InkBrush" Color="#101010" />
+          <SolidColorBrush x:Key="MutedInkBrush" Color="#5A5A58" />
+          <SolidColorBrush x:Key="TrackBrush" Color="#D2D2CE" />
+          <SolidColorBrush x:Key="RowBorderBrush" Color="#B4B4B0" />
+          <SolidColorBrush x:Key="StateRunningBrush" Color="#17663A" />
+          <SolidColorBrush x:Key="StateWarningBrush" Color="#8A5300" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Dark">
           <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#101010" />
@@ -22,6 +29,12 @@
           <SolidColorBrush x:Key="PrimaryButtonBackgroundBrush" Color="#FFFFFF" />
           <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#000000" />
           <SolidColorBrush x:Key="ErrorForegroundBrush" Color="#EF9A9A" />
+          <SolidColorBrush x:Key="InkBrush" Color="#FFFFFF" />
+          <SolidColorBrush x:Key="MutedInkBrush" Color="#A8A8A4" />
+          <SolidColorBrush x:Key="TrackBrush" Color="#3A3A38" />
+          <SolidColorBrush x:Key="RowBorderBrush" Color="#4A4A48" />
+          <SolidColorBrush x:Key="StateRunningBrush" Color="#7BD99B" />
+          <SolidColorBrush x:Key="StateWarningBrush" Color="#F2B84B" />
         </ResourceDictionary>
       </ResourceDictionary.ThemeDictionaries>
     </ResourceDictionary>
@@ -69,6 +82,70 @@
       <Setter Property="Padding" Value="12,5" />
       <Setter Property="FontSize" Value="13" />
       <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <!-- Secondary row actions recede so Resume/Pause reads first. -->
+    <Style Selector="Button.row-action.quiet">
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="FontWeight" Value="Normal" />
+      <Setter Property="Padding" Value="8,5" />
+    </Style>
+    <Style Selector="Button.row-action.quiet:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="BorderBrush" Value="{DynamicResource RowBorderBrush}" />
+    </Style>
+    <Style Selector="ProgressBar">
+      <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+      <Setter Property="Background" Value="{DynamicResource TrackBrush}" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <Style Selector="ProgressBar.stalled">
+      <Setter Property="Foreground" Value="{DynamicResource StateWarningBrush}" />
+    </Style>
+    <Style Selector="ProgressBar.error">
+      <Setter Property="Foreground" Value="{DynamicResource ErrorForegroundBrush}" />
+    </Style>
+    <Style Selector="Border.state-chip">
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BorderBrush" Value="{DynamicResource RowBorderBrush}" />
+      <Setter Property="Padding" Value="8,2" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="TextElement.Foreground" Value="{DynamicResource MutedInkBrush}" />
+    </Style>
+    <Style Selector="Border.state-chip.running">
+      <Setter Property="BorderBrush" Value="{DynamicResource StateRunningBrush}" />
+      <Setter Property="TextElement.Foreground" Value="{DynamicResource StateRunningBrush}" />
+    </Style>
+    <Style Selector="Border.state-chip.stalled">
+      <Setter Property="BorderBrush" Value="{DynamicResource StateWarningBrush}" />
+      <Setter Property="TextElement.Foreground" Value="{DynamicResource StateWarningBrush}" />
+    </Style>
+    <Style Selector="Border.state-chip.error">
+      <Setter Property="BorderBrush" Value="{DynamicResource ErrorForegroundBrush}" />
+      <Setter Property="TextElement.Foreground" Value="{DynamicResource ErrorForegroundBrush}" />
+    </Style>
+    <Style Selector="Border.torrent-row">
+      <Setter Property="BorderBrush" Value="{DynamicResource RowBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="18,14" />
+    </Style>
+    <!-- Selection is an ink outline, not a tinted fill: text contrast stays the same in both themes. -->
+    <Style Selector="ListBoxItem:selected Border.torrent-row">
+      <Setter Property="BorderBrush" Value="{DynamicResource InkBrush}" />
+    </Style>
+    <Style Selector="ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
     </Style>
     <Style Selector="Button.dialog-footer">
       <Setter Property="Height" Value="36" />

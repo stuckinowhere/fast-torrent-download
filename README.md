@@ -50,7 +50,7 @@ On an interactive Windows desktop, exercise the native views with an isolated fi
 dotnet run --project tests/FastTorrentDownload.Tests --configuration Release -- --ui-smoke-auto
 ```
 
-Use `--ui-smoke` instead for manual inspection. Old settings containing a seeding ratio remain readable; the obsolete ratio is ignored because completed downloads are removed automatically.
+Use `--ui-smoke` instead for manual inspection, or `--ui-shots <folder>` to render the fixture queue and Settings page to PNG files in both themes for design review. Old settings containing a seeding ratio remain readable; the obsolete ratio is ignored because completed downloads are removed automatically.
 
 ## Create release artifacts
 
