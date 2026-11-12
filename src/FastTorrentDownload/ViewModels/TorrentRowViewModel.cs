@@ -18,6 +18,21 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     public bool CanPause => CanAct && State is "Downloading" or "Seeding" or "Metadata" or "Hashing" or "FetchingHashes" or "Queued" or "Stalled";
     public bool CanResume => CanAct && !CanPause;
     public string StateLabel => Operation ?? State;
+    // Engine state names are developer vocabulary; the chip speaks the user's.
+    public string StateDisplay => Operation ?? State switch
+    {
+        "Metadata" => "Fetching file list",
+        "Hashing" or "FetchingHashes" => "Checking files",
+        "HashingPaused" => "Check paused",
+        "Stopped" or "Paused" => Progress >= 100 ? "Complete" : "Paused",
+        _ => State
+    };
+    public bool IsRunningState => Operation is null && State is "Downloading" or "Seeding" or "Metadata" or "Hashing" or "FetchingHashes" or "Starting";
+    public bool IsStalledState => Operation is null && State == "Stalled";
+    public bool IsErrorState => Operation is null && State == "Error";
+    [ObservableProperty] private bool _isDetailsOpen;
+    public string DetailsToggleLabel => IsDetailsOpen ? "Hide details" : "Details";
+    partial void OnIsDetailsOpenChanged(bool value) => OnPropertyChanged(nameof(DetailsToggleLabel));
     partial void OnOperationChanged(string? value) => NotifyActionState();
     partial void OnStateChanged(string value) => NotifyActionState();
 
@@ -28,6 +43,11 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
         OnPropertyChanged(nameof(CanPause));
         OnPropertyChanged(nameof(CanResume));
         OnPropertyChanged(nameof(StateLabel));
+        OnPropertyChanged(nameof(StateDisplay));
+        OnPropertyChanged(nameof(IsRunningState));
+        OnPropertyChanged(nameof(IsStalledState));
+        OnPropertyChanged(nameof(IsErrorState));
+        OnPropertyChanged(nameof(DetailLabel));
         OnPropertyChanged(nameof(DiagnosticsText));
     }
     private long _downloadRate = snapshot.DownloadRate;
@@ -43,8 +63,18 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     public string ProgressLabel => $"{Progress:0.0}%";
     public string TransferLabel => $"↓ {FormatRate(_downloadRate)}   ↑ {FormatRate(_uploadRate)}";
     // A stalled row says why instead of an ETA that will never arrive.
-    private string ProgressOutlook => _diagnostics?.StallSummary ?? TransferFormatting.Remaining(_verifiedBytes, _selectedBytes, _downloadRate, State);
-    public string DetailLabel => $"{TransferFormatting.Bytes(_verifiedBytes)} / {TransferFormatting.Bytes(_selectedBytes)} verified · {ProgressOutlook} · {(_diagnostics?.PeerError is not null ? "peer statistics unavailable" : $"{_seederCount} connected seeders · {_leecherCount} other peers")}";
+    private string ProgressOutlook => State switch
+    {
+        "Queued" => "waiting for a free download slot",
+        "Stopped" or "Paused" => _selectedBytes > 0 && _verifiedBytes >= _selectedBytes ? "Complete" : "paused",
+        _ => _diagnostics?.StallSummary ?? TransferFormatting.Remaining(_verifiedBytes, _selectedBytes, _downloadRate, State)
+    };
+    // Peer counts and an ETA mean nothing for a torrent that is not running.
+    private bool ShowsPeers => State is not ("Stopped" or "Paused" or "Queued" or "Error");
+    private string PeerSummary => _diagnostics?.PeerError is not null
+        ? "peer statistics unavailable"
+        : $"{_seederCount} connected seeders · {_leecherCount} other peers";
+    public string DetailLabel => $"{TransferFormatting.Bytes(_verifiedBytes)} / {TransferFormatting.Bytes(_selectedBytes)} verified · {ProgressOutlook}{(ShowsPeers ? " · " + PeerSummary : string.Empty)}";
     public string SessionLabel => $"Session received {TransferFormatting.Bytes(_downloadedBytes)} · sent {TransferFormatting.Bytes(_uploadedBytes)}";
     public string DiagnosticsText => $"Torrent state: {StateLabel}\n{_diagnostics?.Describe(_downloadRate) ?? "Diagnostics not available yet."}";
 
@@ -70,7 +100,11 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
         OnPropertyChanged(nameof(DiagnosticsText));
     }
 
-    partial void OnProgressChanged(double value) => OnPropertyChanged(nameof(ProgressLabel));
+    partial void OnProgressChanged(double value)
+    {
+        OnPropertyChanged(nameof(ProgressLabel));
+        OnPropertyChanged(nameof(StateDisplay));
+    }
 
     public static string FormatRate(long bytesPerSecond) => TransferFormatting.Rate(bytesPerSecond);
 }

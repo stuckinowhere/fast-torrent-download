@@ -16,8 +16,9 @@
         <StackPanel Orientation="Horizontal" Spacing="14">
           <Border Width="42" Height="42" Background="{DynamicResource HeaderForegroundBrush}"
                   VerticalAlignment="Center">
-            <TextBlock Text="↓" FontSize="30" FontWeight="Bold" HorizontalAlignment="Center"
-                       VerticalAlignment="Center" Foreground="{DynamicResource HeaderBackgroundBrush}" />
+            <Path Data="M12,4 V17 M6.5,11.5 L12,17 L17.5,11.5 M5,21 H19" Width="24" Height="24" Stretch="None"
+                  HorizontalAlignment="Center" VerticalAlignment="Center" StrokeThickness="2.6"
+                  Stroke="{DynamicResource HeaderBackgroundBrush}" />
           </Border>
           <StackPanel Spacing="2" VerticalAlignment="Center">
             <TextBlock Text="fast torrent download" FontSize="24" FontWeight="Bold"
@@ -27,8 +28,12 @@
           </StackPanel>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-          <Button Classes="header-button" Content="&#x263E;"
-                  Click="ThemeToggle_Click" ToolTip.Tip="Toggle dark/light theme" />
+          <Button Classes="header-button" Click="ThemeToggle_Click" ToolTip.Tip="Toggle dark/light theme"
+                  AutomationProperties.Name="Toggle dark or light theme">
+            <Path Data="M20,13.2 A8.2,8.2 0 1 1 10.8,4 A6.4,6.4 0 0 0 20,13.2 Z" Width="18" Height="18" Stretch="Uniform"
+                  StrokeThickness="1.8" StrokeJoin="Round"
+                  Stroke="{Binding $parent[Button].Foreground}" />
+          </Button>
           <Button Classes="header-button" Content="Check update" Click="Update_Click" />
           <Button Classes="header-button" Content="Settings" Click="Settings_Click" />
           <Button Classes="primary header-button" Content="+ Add torrent" Click="Add_Click" />
@@ -47,41 +52,55 @@
       </Grid>
 
       <ListBox Grid.Row="1" ItemsSource="{Binding Torrents}" SelectedItem="{Binding SelectedTorrent, Mode=TwoWay}"
-               BorderThickness="0" Background="Transparent">
+               BorderThickness="0" Background="Transparent" IsVisible="{Binding HasTorrents}">
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="vm:TorrentRowViewModel">
-            <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}" BorderThickness="1" Padding="18">
-              <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="9">
-                <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="16" TextTrimming="CharacterEllipsis" />
-                <TextBlock Grid.Column="1" Text="{Binding StateLabel}" FontFamily="Consolas" Opacity="0.75" />
-                <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding Progress}" Height="8" />
-                <Grid Grid.Row="2" Grid.ColumnSpan="2" ColumnDefinitions="Auto,*" ColumnSpacing="16">
+            <Border Classes="torrent-row">
+              <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="8" ColumnSpacing="16">
+                <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="15" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                           ToolTip.Tip="{Binding Name}" />
+                <Border Grid.Column="1" Classes="state-chip" Classes.running="{Binding IsRunningState}"
+                        Classes.stalled="{Binding IsStalledState}" Classes.error="{Binding IsErrorState}">
+                  <TextBlock Text="{Binding StateDisplay}" FontSize="12" FontWeight="SemiBold" />
+                </Border>
+                <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding Progress}" Height="6"
+                             Classes.stalled="{Binding IsStalledState}" Classes.error="{Binding IsErrorState}" />
+                <Grid Grid.Row="2" Grid.ColumnSpan="2" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
                   <TextBlock Text="{Binding ProgressLabel}" FontFamily="Consolas" FontWeight="SemiBold" />
-                  <TextBlock Grid.Column="1" Text="{Binding TransferLabel}" FontFamily="Consolas" HorizontalAlignment="Right" />
+                  <TextBlock Grid.Column="1" Text="{Binding DetailLabel}" Foreground="{DynamicResource MutedInkBrush}"
+                             TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding DetailLabel}" />
+                  <TextBlock Grid.Column="2" Text="{Binding TransferLabel}" FontFamily="Consolas" IsVisible="{Binding IsRunningState}" />
                 </Grid>
-                <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Text="{Binding DetailLabel}" Opacity="0.8" TextWrapping="Wrap" />
                 <!-- Actions live on the row they act on (Fitts): no selection step, no chooser dialog. -->
-                <WrapPanel Grid.Row="4" Grid.ColumnSpan="2" Orientation="Horizontal" ItemSpacing="8" LineSpacing="8">
-                  <Button Classes="row-action" Content="Resume" Click="RowResume_Click" IsVisible="{Binding CanResume}" IsEnabled="{Binding CanAct}" />
-                  <Button Classes="row-action" Content="Pause" Click="RowPause_Click" IsVisible="{Binding CanPause}" IsEnabled="{Binding CanAct}" />
-                  <Button Classes="row-action" Content="Recheck" Click="RowRecheck_Click" IsEnabled="{Binding CanAct}" />
-                  <Button Classes="row-action" Content="Files…" Click="RowFiles_Click" IsEnabled="{Binding CanAct}" />
-                  <Button Classes="row-action" Content="Move…" Click="RowMove_Click" IsEnabled="{Binding CanAct}" />
-                  <Button Classes="row-action" Content="Show folder" Click="RowFolder_Click" />
-                  <Button Classes="row-action" Content="Remove" Click="RowRemove_Click" IsEnabled="{Binding CanAct}" />
-                </WrapPanel>
-                <Expander Grid.Row="5" Grid.ColumnSpan="2" Header="Details and speed diagnostics" HorizontalAlignment="Stretch">
-                  <StackPanel Spacing="8" Margin="0,8,0,0">
-                    <SelectableTextBlock Text="{Binding Destination}" TextWrapping="Wrap" />
-                    <SelectableTextBlock Text="{Binding SessionLabel}" TextWrapping="Wrap" />
-                    <SelectableTextBlock Text="{Binding DiagnosticsText}" TextWrapping="Wrap" />
-                  </StackPanel>
-                </Expander>
+                <Grid Grid.Row="3" Grid.ColumnSpan="2" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <WrapPanel Orientation="Horizontal" ItemSpacing="4" LineSpacing="6">
+                    <Button Classes="row-action" Content="Resume" Click="RowResume_Click" IsVisible="{Binding CanResume}" IsEnabled="{Binding CanAct}" Margin="0,0,6,0" />
+                    <Button Classes="row-action" Content="Pause" Click="RowPause_Click" IsVisible="{Binding CanPause}" IsEnabled="{Binding CanAct}" Margin="0,0,6,0" />
+                    <Button Classes="row-action quiet" Content="Recheck" Click="RowRecheck_Click" IsEnabled="{Binding CanAct}" />
+                    <Button Classes="row-action quiet" Content="Files…" Click="RowFiles_Click" IsEnabled="{Binding CanAct}" />
+                    <Button Classes="row-action quiet" Content="Move…" Click="RowMove_Click" IsEnabled="{Binding CanAct}" />
+                    <Button Classes="row-action quiet" Content="Show folder" Click="RowFolder_Click" />
+                    <Button Classes="row-action quiet" Content="Remove" Click="RowRemove_Click" IsEnabled="{Binding CanAct}" />
+                  </WrapPanel>
+                  <Button Grid.Column="1" Classes="row-action quiet" Content="{Binding DetailsToggleLabel}" Click="RowDetails_Click" VerticalAlignment="Top" />
+                </Grid>
+                <StackPanel Grid.Row="4" Grid.ColumnSpan="2" Spacing="6" Margin="0,4,0,2" IsVisible="{Binding IsDetailsOpen}">
+                  <SelectableTextBlock Text="{Binding Destination}" TextWrapping="Wrap" />
+                  <SelectableTextBlock Text="{Binding SessionLabel}" TextWrapping="Wrap" Foreground="{DynamicResource MutedInkBrush}" />
+                  <SelectableTextBlock Text="{Binding DiagnosticsText}" TextWrapping="Wrap" LineHeight="20" />
+                </StackPanel>
               </Grid>
             </Border>
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>
+
+      <!-- Empty queue: teach the three ways in instead of showing a blank page. -->
+      <StackPanel Grid.Row="1" IsVisible="{Binding !HasTorrents}" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10" MaxWidth="520">
+        <TextBlock Text="No torrents yet" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" />
+        <TextBlock TextWrapping="Wrap" TextAlignment="Center" Foreground="{DynamicResource MutedInkBrush}" LineHeight="22"
+                   Text="Drop a .torrent file on this window, press Ctrl+V with a magnet link copied, or use “+ Add torrent”. You choose which files to download before anything starts." />
+      </StackPanel>
     </Grid>
 
     <Grid x:Name="SettingsPageGrid" Grid.Row="1" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="12" Margin="28,22,28,14" IsVisible="{Binding IsSettingsOpen}">

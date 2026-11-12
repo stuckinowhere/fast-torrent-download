@@ -278,6 +278,14 @@ public partial class MainWindow : Window
     private async void RowRemove_Click(object? sender, RoutedEventArgs eventArgs) => await RunRowActionAsync(sender, _viewModel.RemoveTorrentAsync);
     private void RowFolder_Click(object? sender, RoutedEventArgs eventArgs) => _viewModel.OpenTorrentFolder(RowOf(sender));
 
+    private void RowDetails_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        if (RowOf(sender) is { } row)
+        {
+            row.IsDetailsOpen = !row.IsDetailsOpen;
+        }
+    }
+
     private async void RowFiles_Click(object? sender, RoutedEventArgs eventArgs)
     {
         if (RowOf(sender) is not { } row)
