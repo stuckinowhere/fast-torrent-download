@@ -15,7 +15,7 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     public bool IsBusy => Operation is not null || State is "Starting" or "Stopping";
     public bool CanAct => !IsBusy;
     // "Queued" torrents are stopped by the scheduler, not by the user, so Pause is the way to hold them.
-    public bool CanPause => CanAct && State is "Downloading" or "Seeding" or "Metadata" or "Hashing" or "FetchingHashes" or "Queued";
+    public bool CanPause => CanAct && State is "Downloading" or "Seeding" or "Metadata" or "Hashing" or "FetchingHashes" or "Queued" or "Stalled";
     public bool CanResume => CanAct && !CanPause;
     public string StateLabel => Operation ?? State;
     partial void OnOperationChanged(string? value) => NotifyActionState();
@@ -42,7 +42,9 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
 
     public string ProgressLabel => $"{Progress:0.0}%";
     public string TransferLabel => $"↓ {FormatRate(_downloadRate)}   ↑ {FormatRate(_uploadRate)}";
-    public string DetailLabel => $"{TransferFormatting.Bytes(_verifiedBytes)} / {TransferFormatting.Bytes(_selectedBytes)} verified · {TransferFormatting.Remaining(_verifiedBytes, _selectedBytes, _downloadRate, State)} · {(_diagnostics?.PeerError is not null ? "peer statistics unavailable" : $"{_seederCount} connected seeders · {_leecherCount} other peers")}";
+    // A stalled row says why instead of an ETA that will never arrive.
+    private string ProgressOutlook => _diagnostics?.StallSummary ?? TransferFormatting.Remaining(_verifiedBytes, _selectedBytes, _downloadRate, State);
+    public string DetailLabel => $"{TransferFormatting.Bytes(_verifiedBytes)} / {TransferFormatting.Bytes(_selectedBytes)} verified · {ProgressOutlook} · {(_diagnostics?.PeerError is not null ? "peer statistics unavailable" : $"{_seederCount} connected seeders · {_leecherCount} other peers")}";
     public string SessionLabel => $"Session received {TransferFormatting.Bytes(_downloadedBytes)} · sent {TransferFormatting.Bytes(_uploadedBytes)}";
     public string DiagnosticsText => $"Torrent state: {StateLabel}\n{_diagnostics?.Describe(_downloadRate) ?? "Diagnostics not available yet."}";
 

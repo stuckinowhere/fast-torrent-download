@@ -20,6 +20,7 @@ public sealed partial class MainViewModel(
     private readonly HashSet<string> _rowOperations = new();
     private readonly Dictionary<string, int> _closedPortStreaks = new();
     private readonly HashSet<string> _notifiedErrors = new();
+    private readonly HashSet<string> _notifiedStalled = new();
     private bool _portWarningDismissed;
     private bool _portWarningNotified;
     private AppSettings _settings = new();
@@ -339,6 +340,7 @@ public sealed partial class MainViewModel(
 
                 _closedPortStreaks.Remove(obsolete.Id);
                 _notifiedErrors.RemoveWhere(key => key.StartsWith(obsolete.Id + ":", StringComparison.Ordinal));
+                _notifiedStalled.Remove(obsolete.Id);
                 Torrents.Remove(obsolete);
             }
 
@@ -352,6 +354,7 @@ public sealed partial class MainViewModel(
                 : $"fast torrent download · {QueueSummary} · {TotalDownloadRate} {TotalUploadRate}";
             OnPropertyChanged(nameof(HasTorrents));
             NotifySnapshotErrors(snapshots);
+            NotifyStalled(snapshots);
             UpdatePortWarning(snapshots);
             foreach (var completion in _engine.TakeCompletions())
             {
@@ -390,6 +393,25 @@ public sealed partial class MainViewModel(
             {
                 StatusMessage = $"Error in {snapshot.Name}: {error}";
                 ShowNotification(StatusMessage, snapshot.Destination);
+            }
+        }
+    }
+
+    // One notice per stall episode: the row keeps showing the reason while it lasts.
+    private void NotifyStalled(IReadOnlyList<TorrentSnapshot> snapshots)
+    {
+        foreach (var snapshot in snapshots)
+        {
+            if (snapshot.State != "Stalled")
+            {
+                _notifiedStalled.Remove(snapshot.Id);
+                continue;
+            }
+
+            if (_notifiedStalled.Add(snapshot.Id))
+            {
+                StatusMessage = $"{snapshot.Name} is stalled: {snapshot.Diagnostics?.StallSummary ?? "no data received"}.";
+                ShowNotification(StatusMessage, null);
             }
         }
     }
