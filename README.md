@@ -15,6 +15,7 @@ A local-first Windows 11 x64 BitTorrent client built with Avalonia and MonoTorre
 - Persist confirmed additions and removals immediately; restore the selected files, pause intent and actual download folder from `%LocalAppData%\\fast-torrent-download`.
 - Pause and remove with per-torrent progress feedback and a bounded tracker-stop announce wait, while other rows keep updating.
 - Show verified bytes and progress for the selected files, fractional KiB/MiB rates and estimated time remaining.
+- A download that receives nothing for five minutes shows as *Stalled* with the reason (for example "No seeders in the swarm · 17 other downloaders waiting"), using tracker scrape counts. A stalled torrent stops keeping the computer awake, frees its active-download slot and reannounces less often.
 - Inspect per-torrent speed diagnostics (refreshed every three seconds): connected/receiving peers, piece coverage, trackers, DHT, effective limits and reported errors.
 - Completed downloads automatically leave the queue while files stay on disk. An eight-second notification and the current session's latest 50 activity messages provide access to their folders.
 - Configure DHT, peer exchange, local peer discovery, UPnP/NAT-PMP, a specific inbound IPv4 listener, optional required peer encryption and bandwidth caps.

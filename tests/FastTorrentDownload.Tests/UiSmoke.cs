@@ -136,8 +136,18 @@ internal static class UiSmoke
     private static async Task VerifyEndToEndAsync(MainWindow main, MainViewModel viewModel, string root, CancellationToken token)
     {
         var click = new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent);
-        Button RowButton(TorrentRowViewModel target, string name) => main.GetVisualDescendants().OfType<Button>()
-            .Single(button => Equals(button.Content, name) && ReferenceEquals(button.DataContext, target));
+        // The queue list virtualizes: a row that is off-screen or was just added has no buttons yet.
+        Button RowButton(TorrentRowViewModel target, string name)
+        {
+            Button? Find() => main.GetVisualDescendants().OfType<Button>()
+                .SingleOrDefault(button => Equals(button.Content, name) && ReferenceEquals(button.DataContext, target));
+            if (Find() is { } ready) return ready;
+            var list = main.GetVisualDescendants().OfType<ListBox>().First();
+            list.ScrollIntoView(target);
+            list.UpdateLayout();
+            return Find() ?? throw new InvalidOperationException(
+                $"Row button '{name}' for '{target.Name}' is not realized. Rows: {string.Join(", ", viewModel.Torrents.Select(row => $"{row.Name}={row.State}"))}; window {main.ClientSize}; list {list.Bounds}.");
+        }
         async Task UntilAsync(Func<bool> condition, string message)
         {
             using var step = CancellationTokenSource.CreateLinkedTokenSource(token);

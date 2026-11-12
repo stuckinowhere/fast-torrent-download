@@ -246,6 +246,31 @@ Check("active-download limit queues extra torrents and treats transfer states as
     Require(!downloading.CanPause && !downloading.CanResume && downloading.IsBusy);
 });
 
+Check("a download with no payload is reported as stalled with the reason and backs off reannounces", () =>
+{
+    Require(TorrentEngineService.IsStalled(TorrentState.Downloading, TorrentEngineService.StallThreshold));
+    Require(!TorrentEngineService.IsStalled(TorrentState.Downloading, TorrentEngineService.StallThreshold - TimeSpan.FromSeconds(1)));
+    Require(!TorrentEngineService.IsStalled(TorrentState.Seeding, TimeSpan.FromHours(1)));
+    Require(!TorrentEngineService.IsStalled(TorrentState.Stopped, TimeSpan.FromHours(1)));
+    Require(!TorrentEngineService.ShouldReannounceStarvedTorrent(TorrentState.Downloading, 2, TimeSpan.FromMinutes(3), stalled: true));
+    Require(TorrentEngineService.ShouldReannounceStarvedTorrent(TorrentState.Downloading, 2, TimeSpan.FromMinutes(15), stalled: true));
+    var flowing = new TorrentDiagnostics(20, 2, 0, 0, 62.7, "Ready", 50, 0, 0, []);
+    Require(!flowing.IsStalled && flowing.StallSummary is null);
+    var dead = flowing with { SwarmSeeders = 0, SwarmLeechers = 17, StalledFor = TimeSpan.FromMinutes(6) };
+    Require(dead.IsStalled && dead.HasNoSeeders);
+    Require(dead.StallSummary == $"No seeders in the swarm · 17 other downloaders waiting · connected peers hold {62.7:0.0}%");
+    Require(dead.Diagnosis(0).StartsWith("Stalled: No seeders in the swarm") && dead.Diagnosis(0).Contains("another source"));
+    Require(dead.Describe(0).Contains("Swarm reported by trackers: 0 seeders · 17 downloaders"));
+    Require(flowing.Describe(0).Contains("Swarm reported by trackers: not available yet"));
+    // A tracker-reported seeder that is not connected is a reachability problem, not a dead swarm.
+    var unreachable = dead with { SwarmSeeders = 3 };
+    Require(!unreachable.HasNoSeeders && unreachable.StallSummary == $"Connected peers hold only {62.7:0.0}% of the data");
+    Require((dead with { ConnectedPeers = 0, KnownPeers = 0, SwarmSeeders = null }).StallSummary == "No peers found");
+    var row = new TorrentRowViewModel(Snapshot(62.7, 0, 0, state: "Stalled") with { Diagnostics = dead, SelectedBytes = 2048, VerifiedBytes = 1024 });
+    Require(row.CanPause && !row.CanResume && row.StateLabel == "Stalled");
+    Require(row.DetailLabel.Contains("No seeders in the swarm") && !row.DetailLabel.Contains("ETA"));
+});
+
 Check("second-instance sources are filtered to magnets and torrent files", () =>
 {
     var sources = SingleInstanceChannel.ExtractSources(["--minimized", " magnet:?xt=urn:btih:abc ", @"C:\x\file.torrent", "notes.txt", ""]);
@@ -319,7 +344,9 @@ Check("pause intents copy and normalize without aliasing", () =>
 await CheckRestoredDestinationAsync();
 await CheckSingleInstanceForwardingAsync();
 await CheckFileSelectionDuplicateAndQueueAsync();
-passed += 3;
+await CheckStalledTorrentFreesQueueSlotAsync();
+await CheckDeadSwarmIsNamedFromTrackerScrapeAsync();
+passed += 5;
 await CheckCompletedRemovalAsync(selectedOnly: true);
 await CheckCompletedRemovalAsync(selectedOnly: false);
 await CheckCompletedRemovalAsync(selectedOnly: true, manualRemoval: true);
@@ -630,6 +657,189 @@ static async Task CheckFileSelectionDuplicateAndQueueAsync()
     finally
     {
         try { Directory.Delete(root, recursive: true); } catch { }
+    }
+}
+
+static async Task CheckStalledTorrentFreesQueueSlotAsync()
+{
+    var root = Path.Combine(Path.GetTempPath(), "fast-torrent-stalled-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    var threshold = TorrentEngineService.StallThreshold;
+    try
+    {
+        var data = new byte[16_384];
+        BEncodedDictionary Torrent(string name) => new()
+        {
+            ["info"] = new BEncodedDictionary
+            {
+                ["name"] = new BEncodedString(name), ["length"] = new BEncodedNumber(data.Length),
+                ["piece length"] = new BEncodedNumber(data.Length), ["pieces"] = new BEncodedString(SHA1.HashData(System.Text.Encoding.ASCII.GetBytes(name)))
+            }
+        };
+        using var engine = new ClientEngine(new EngineSettingsBuilder
+        {
+            CacheDirectory = Path.Combine(root, "cache"), DhtEndPoint = null, AllowPortForwarding = false,
+            AllowLocalPeerDiscovery = false, ListenEndPoints = new Dictionary<string, IPEndPoint>()
+        }.ToSettings());
+        var paths = new AppPaths(Path.Combine(root, "app-state"));
+        paths.EnsureDirectories();
+        var service = new TorrentEngineService(paths);
+        typeof(TorrentEngineService).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(service, engine);
+        typeof(TorrentEngineService).GetField("_settings", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(service, new AppSettings { DefaultDownloadFolder = root, MaximumActiveDownloads = 1 });
+        var ids = new List<string>();
+        foreach (var name in new[] { "dead-swarm", "waiting-behind" })
+        {
+            var source = Path.Combine(root, name + ".torrent");
+            await File.WriteAllBytesAsync(source, Torrent(name).Encode());
+            var preview = await service.PrepareAddAsync(source, root);
+            await service.CommitAddAsync(preview, [name], startImmediately: false);
+            ids.Add(preview.Id);
+        }
+
+        var viewModel = new MainViewModel(service, new SettingsStore(paths), new ReleaseUpdateService());
+        await service.StartAsync(ids[0]);
+        await service.StartAsync(ids[1]);
+        await viewModel.RefreshAsync();
+        Require(viewModel.Torrents.Single(row => row.Id == ids[1]).State == "Queued");
+
+        // Nothing can ever arrive (no peers, no trackers): once the threshold passes the row must say so.
+        TorrentEngineService.StallThreshold = TimeSpan.FromMilliseconds(300);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (viewModel.Torrents.Single(row => row.Id == ids[0]).State != "Stalled")
+        {
+            await Task.Delay(100, timeout.Token);
+            await viewModel.RefreshAsync();
+        }
+        var stalled = viewModel.Torrents.Single(row => row.Id == ids[0]);
+        Require(stalled.DetailLabel.Contains("No peers found") && stalled.DiagnosticsText.Contains("Stalled for"));
+        Require(viewModel.Activity.Any(item => item.Message.StartsWith("dead-swarm is stalled: No peers found")));
+
+        // The stalled torrent no longer holds the only active slot, so the queued one starts.
+        while (viewModel.Torrents.Single(row => row.Id == ids[1]).State is "Queued" or "Stopped")
+        {
+            await Task.Delay(100, timeout.Token);
+            await viewModel.RefreshAsync();
+        }
+
+        // Pausing clears the stall; with the real threshold back, a resume starts a fresh episode.
+        TorrentEngineService.StallThreshold = threshold;
+        await service.PauseAsync(ids[0]);
+        await viewModel.RefreshAsync();
+        Require(viewModel.Torrents.Single(row => row.Id == ids[0]).State == "Stopped");
+        await service.PauseAsync(ids[1]);
+        await service.RemoveAsync(ids[0]);
+        await service.RemoveAsync(ids[1]);
+        Console.WriteLine("PASS offline stalled torrent reports its reason, notifies once and frees its active-download slot");
+    }
+    finally
+    {
+        TorrentEngineService.StallThreshold = threshold;
+        try { Directory.Delete(root, recursive: true); } catch { }
+    }
+}
+
+static async Task CheckDeadSwarmIsNamedFromTrackerScrapeAsync()
+{
+    var root = Path.Combine(Path.GetTempPath(), "fast-torrent-scrape-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    var threshold = TorrentEngineService.StallThreshold;
+    using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    using var tracker = new TcpListener(IPAddress.Loopback, 0);
+    tracker.Start();
+    var announce = $"http://127.0.0.1:{((IPEndPoint)tracker.LocalEndpoint).Port}/announce";
+    byte[] infoHash = [];
+    var scrapes = 0;
+    var server = ServeAsync();
+    try
+    {
+        var encoded = new BEncodedDictionary
+        {
+            ["announce"] = new BEncodedString(announce),
+            ["info"] = new BEncodedDictionary
+            {
+                ["name"] = new BEncodedString("no-seeders"), ["length"] = new BEncodedNumber(16_384),
+                ["piece length"] = new BEncodedNumber(16_384), ["pieces"] = new BEncodedString(SHA1.HashData(new byte[] { 1, 2, 3 }))
+            }
+        };
+        var source = Path.Combine(root, "no-seeders.torrent");
+        await File.WriteAllBytesAsync(source, encoded.Encode());
+        infoHash = Torrent.Load(source).InfoHashes.V1!.Span.ToArray();
+        using var engine = new ClientEngine(new EngineSettingsBuilder
+        {
+            CacheDirectory = Path.Combine(root, "cache"), DhtEndPoint = null, AllowPortForwarding = false,
+            AllowLocalPeerDiscovery = false, ListenEndPoints = new Dictionary<string, IPEndPoint>()
+        }.ToSettings());
+        var paths = new AppPaths(Path.Combine(root, "app-state"));
+        paths.EnsureDirectories();
+        var service = new TorrentEngineService(paths);
+        typeof(TorrentEngineService).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(service, engine);
+        var preview = await service.PrepareAddAsync(source, root);
+        await service.CommitAddAsync(preview, ["no-seeders"], startImmediately: true);
+        TorrentEngineService.StallThreshold = TimeSpan.FromMilliseconds(300);
+        TorrentSnapshot snapshot;
+        do
+        {
+            await Task.Delay(100, stop.Token);
+            snapshot = (await service.GetSnapshotsAsync()).Single();
+        }
+        while (snapshot.State != "Stalled" || snapshot.Diagnostics?.SwarmSeeders is null);
+        Require(scrapes > 0);
+        Require(snapshot.Diagnostics!.SwarmSeeders == 0 && snapshot.Diagnostics.SwarmLeechers == 17 && snapshot.Diagnostics.HasNoSeeders);
+        Require(snapshot.Diagnostics.StallSummary!.StartsWith("No seeders in the swarm · 17 other downloaders waiting"));
+        Require(new TorrentRowViewModel(snapshot).DetailLabel.Contains("No seeders in the swarm"));
+        TorrentEngineService.StallThreshold = threshold;
+        await service.RemoveAsync(preview.Id);
+        Console.WriteLine("PASS loopback tracker scrape names a dead swarm: 0 seeders, 17 downloaders waiting");
+    }
+    finally
+    {
+        TorrentEngineService.StallThreshold = threshold;
+        stop.Cancel();
+        tracker.Stop();
+        await server;
+        try { Directory.Delete(root, recursive: true); } catch { }
+    }
+
+    async Task ServeAsync()
+    {
+        try
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                using var client = await tracker.AcceptTcpClientAsync(stop.Token);
+                var stream = client.GetStream();
+                using var reader = new StreamReader(stream, System.Text.Encoding.ASCII, leaveOpen: true);
+                var request = await reader.ReadLineAsync(stop.Token) ?? string.Empty;
+                while (await reader.ReadLineAsync(stop.Token) is { Length: > 0 }) { }
+                byte[] body;
+                if (request.Contains("/scrape", StringComparison.Ordinal))
+                {
+                    scrapes++;
+                    body = new BEncodedDictionary
+                    {
+                        ["files"] = new BEncodedDictionary
+                        {
+                            [new BEncodedString(infoHash)] = new BEncodedDictionary
+                            {
+                                ["complete"] = new BEncodedNumber(0), ["downloaded"] = new BEncodedNumber(0), ["incomplete"] = new BEncodedNumber(17)
+                            }
+                        }
+                    }.Encode();
+                }
+                else
+                {
+                    body = new BEncodedDictionary { ["interval"] = new BEncodedNumber(1800), ["peers"] = new BEncodedString(Array.Empty<byte>()) }.Encode();
+                }
+
+                var headers = System.Text.Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n");
+                await stream.WriteAsync(headers, stop.Token);
+                await stream.WriteAsync(body, stop.Token);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (SocketException) when (stop.IsCancellationRequested) { }
+        catch (IOException) when (stop.IsCancellationRequested) { }
     }
 }
 

@@ -22,6 +22,10 @@ public sealed class TorrentEngineService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, Task> _automaticRemovals = new();
     private readonly ConcurrentDictionary<string, string> _completionErrors = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastReannounce = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastScrape = new();
+    // Last payload byte count seen per torrent and when it last changed; drives stall detection.
+    private readonly ConcurrentDictionary<string, (long Received, DateTimeOffset At)> _lastPayload = new();
+    private readonly ConcurrentDictionary<string, byte> _stalledIds = new();
     private readonly ConcurrentQueue<TorrentCompletion> _completions = new();
     private readonly ConcurrentDictionary<string, (DateTimeOffset At, TorrentDiagnostics Value)> _diagnosticsCache = new();
     // Torrents that want to run but wait for a free slot under MaximumActiveDownloads.
@@ -31,6 +35,10 @@ public sealed class TorrentEngineService : IAsyncDisposable
     // Peer enumeration and piece-coverage math run per torrent; refreshing them every second
     // is wasted CPU for a panel that is usually collapsed.
     public static TimeSpan DiagnosticsInterval { get; } = TimeSpan.FromSeconds(3);
+    // A torrent that receives no payload for this long is reported as "Stalled" instead of "Downloading".
+    // Settable so the checks can exercise the transition without waiting minutes.
+    public static TimeSpan StallThreshold { get; set; } = TimeSpan.FromMinutes(5);
+    public static TimeSpan ScrapeInterval { get; } = TimeSpan.FromMinutes(5);
     private static readonly HttpClient MetadataCacheHttpClient = CreateMetadataCacheHttpClient();
     private static readonly ConcurrentDictionary<string, byte[]> CachedMagnetTorrents = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, Task<Torrent?>> InFlightMagnetPrefetches = new(StringComparer.OrdinalIgnoreCase);
@@ -717,8 +725,9 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
+    // A stalled torrent transfers nothing, so it must not keep queued torrents waiting.
     private int CountActiveDownloads() =>
-        _entries.Values.Count(entry => IsActiveState(entry.Manager.State));
+        _entries.Count(entry => IsActiveState(entry.Value.Manager.State) && !_stalledIds.ContainsKey(entry.Key));
 
     public static bool IsActiveState(TorrentState state) =>
         state is TorrentState.Downloading or TorrentState.Metadata or TorrentState.Hashing
@@ -840,6 +849,9 @@ public sealed class TorrentEngineService : IAsyncDisposable
             _queuedHashes.Remove(hash);
             _completionErrors.TryRemove(id, out _);
             _lastReannounce.TryRemove(id, out _);
+            _lastScrape.TryRemove(id, out _);
+            _lastPayload.TryRemove(id, out _);
+            _stalledIds.TryRemove(id, out _);
             _diagnosticsCache.TryRemove(id, out _);
         }
         finally
@@ -893,29 +905,65 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 _automaticRemovals[pair.Key] = CompleteAsync(pair.Key, manager, pair.Value.Destination);
             }
 
+            var monitor = manager.Monitor;
+            var downloaded = monitor.DataBytesReceived;
+            TimeSpan? stalledFor = null;
             if (manager.State == TorrentState.Downloading)
             {
                 var now = DateTimeOffset.UtcNow;
+                var payload = _lastPayload.GetOrAdd(pair.Key, (downloaded, now));
+                if (payload.Received != downloaded)
+                {
+                    payload = (downloaded, now);
+                    _lastPayload[pair.Key] = payload;
+                }
+
+                if (IsStalled(manager.State, now - payload.At))
+                {
+                    stalledFor = now - payload.At;
+                }
+
                 var last = _lastReannounce.GetOrAdd(pair.Key, now);
-                if (ShouldReannounceStarvedTorrent(manager.State, manager.OpenConnections, now - last) &&
+                if (ShouldReannounceStarvedTorrent(manager.State, manager.OpenConnections, now - last, stalledFor is not null) &&
                     _lastReannounce.TryUpdate(pair.Key, now, last))
                 {
                     _ = ReannounceStarvedTorrentAsync(manager);
+                }
+
+                // Scrape counts tell a dead swarm (0 seeders) apart from a slow one.
+                if (!_lastScrape.TryGetValue(pair.Key, out var scraped) || now - scraped >= ScrapeInterval)
+                {
+                    _lastScrape[pair.Key] = now;
+                    _ = ScrapeSwarmAsync(manager);
                 }
             }
             else
             {
                 _lastReannounce.TryRemove(pair.Key, out _);
+                _lastPayload.TryRemove(pair.Key, out _);
             }
 
-            var monitor = manager.Monitor;
             var (selectedBytes, verifiedBytes) = GetSelectedBytes(manager);
-            var downloaded = monitor.DataBytesReceived;
             var uploaded = monitor.DataBytesSent;
-            var diagnostics = await GetCachedDiagnosticsAsync(pair.Key, manager);
+            var swarm = ReadSwarm(manager);
+            var diagnostics = await GetCachedDiagnosticsAsync(pair.Key, manager) with
+            {
+                SwarmSeeders = swarm?.Seeders,
+                SwarmLeechers = swarm?.Leechers,
+                StalledFor = stalledFor
+            };
+            if (stalledFor is null)
+            {
+                _stalledIds.TryRemove(pair.Key, out _);
+            }
+            else if (_stalledIds.TryAdd(pair.Key, 0))
+            {
+                AppLogger.Log($"Torrent stalled: no payload for {(int)stalledFor.Value.TotalMinutes} min · swarm seeders={swarm?.Seeders.ToString() ?? "unknown"} leechers={swarm?.Leechers.ToString() ?? "unknown"} · connected={diagnostics.ConnectedPeers} connectedSeeders={diagnostics.ConnectedSeeders} · coverage={diagnostics.AvailablePiecesPercent?.ToString("0.0") ?? "unknown"}%");
+            }
+
             var state = manager.State == TorrentState.Stopped && queued.Contains(DescribeInfoHashes(manager.InfoHashes))
                 ? "Queued"
-                : manager.State.ToString();
+                : stalledFor is not null ? "Stalled" : manager.State.ToString();
             snapshots.Add(new TorrentSnapshot(
                 pair.Key,
                 string.IsNullOrWhiteSpace(manager.Name) ? "Fetching metadata…" : manager.Name,
@@ -934,6 +982,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 diagnostics));
         }
 
+        // "Stalled" is deliberately absent: a dead swarm must not keep the computer awake.
         _sleepGuard.Update(snapshots.Any(s => s.State is "Downloading" or "Metadata" or "Hashing" or "Starting"));
         return snapshots;
     }
@@ -951,10 +1000,41 @@ public sealed class TorrentEngineService : IAsyncDisposable
         return diagnostics;
     }
 
-    public static bool ShouldReannounceStarvedTorrent(TorrentState state, int openConnections, TimeSpan elapsedSinceLastAnnounce) =>
+    public static bool ShouldReannounceStarvedTorrent(TorrentState state, int openConnections, TimeSpan elapsedSinceLastAnnounce, bool stalled = false) =>
         state == TorrentState.Downloading &&
         openConnections < EnginePerformanceTuning.LowPeerThreshold &&
-        elapsedSinceLastAnnounce >= EnginePerformanceTuning.ReannounceInterval;
+        elapsedSinceLastAnnounce >= (stalled ? EnginePerformanceTuning.StalledReannounceInterval : EnginePerformanceTuning.ReannounceInterval);
+
+    public static bool IsStalled(TorrentState state, TimeSpan sinceLastPayload) =>
+        state == TorrentState.Downloading && sinceLastPayload >= StallThreshold;
+
+    private static async Task ScrapeSwarmAsync(TorrentManager manager)
+    {
+        try
+        {
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await manager.TrackerManager.ScrapeAsync(budget.Token);
+        }
+        catch
+        {
+            // Swarm counts are advisory; a failed scrape leaves them unknown.
+        }
+    }
+
+    // Best figure across tiers: trackers disagree, and one live seeder anywhere is enough.
+    private static (int Seeders, int Leechers)? ReadSwarm(TorrentManager manager)
+    {
+        (int Seeders, int Leechers)? best = null;
+        foreach (var tier in manager.TrackerManager.Tiers)
+        {
+            if (tier.ScrapeInfo.TryGetValue(manager.InfoHashes.V1OrV2, out var info))
+            {
+                best = (Math.Max(best?.Seeders ?? 0, info.Complete), Math.Max(best?.Leechers ?? 0, info.Incomplete));
+            }
+        }
+
+        return best;
+    }
 
     private static async Task ReannounceStarvedTorrentAsync(TorrentManager manager)
     {
