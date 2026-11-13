@@ -264,6 +264,29 @@ internal static class UiSmoke
         Require(!File.Exists(oldFile) && new FileInfo(newFile).Length == 16_384, "Move did not relocate the payload.");
         await UntilAsync(() => partial.State is "Downloading" or "Hashing", $"The moved torrent did not resume: {partial.State}.");
 
+        // 4b. Trackers… adds a tracker through the dialog; Delete files… asks first, then removes row and data.
+        RowButton(partial, "Trackers…").RaiseEvent(click);
+        TrackersWindow? trackers = null;
+        await UntilAsync(() => (trackers = main.OwnedWindows.OfType<TrackersWindow>().FirstOrDefault()) is not null, "The trackers dialog did not open.");
+        trackers!.FindControl<TextBox>("NewTrackersTextBox")!.Text = "udp://127.0.0.1:9/announce\nnot-a-tracker";
+        trackers!.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Add trackers")).RaiseEvent(click);
+        await UntilAsync(() => viewModel.StatusMessage.StartsWith("Added 1 tracker to Selected files example. Ignored 1 invalid entry", StringComparison.Ordinal),
+            $"Adding a tracker did not report its result: {viewModel.StatusMessage}");
+        await UntilAsync(() => partial.Trackers.Any(tracker => tracker.Address == "udp://127.0.0.1:9"), "The added tracker is not listed.");
+
+        RowButton(partial, "Delete files…").RaiseEvent(click);
+        DeleteFilesWindow? confirm = null;
+        await UntilAsync(() => (confirm = main.OwnedWindows.OfType<DeleteFilesWindow>().FirstOrDefault()) is not null, "The delete confirmation did not open.");
+        Require(File.Exists(newFile), "Files must not be deleted before the confirmation.");
+        confirm!.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Cancel")).RaiseEvent(click);
+        await UntilAsync(() => main.OwnedWindows.Count == 0, "Cancel did not close the delete confirmation.");
+        Require(File.Exists(newFile) && viewModel.Torrents.Contains(partial), "Cancel must keep the torrent and its files.");
+        RowButton(partial, "Delete files…").RaiseEvent(click);
+        await UntilAsync(() => (confirm = main.OwnedWindows.OfType<DeleteFilesWindow>().FirstOrDefault()) is not null, "The delete confirmation did not reopen.");
+        confirm!.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Delete files")).RaiseEvent(click);
+        await UntilAsync(() => !viewModel.Torrents.Contains(partial), "Delete files did not remove the torrent.");
+        Require(!File.Exists(newFile) && Directory.Exists(moved), "Delete files must remove the payload and keep the chosen folder.");
+
         // 5. Closing the window keeps the app in the tray; the tray command brings it back.
         main.Close();
         await UntilAsync(() => !main.IsVisible, "Close must hide the window when CloseToTray is on.");
@@ -290,7 +313,7 @@ internal static class UiSmoke
             else writable?.DeleteValue("FastTorrentDownload", throwOnMissingValue: false);
         }
 
-        Console.WriteLine("PASS end-to-end: pipe forwarding adds a torrent, Files… edits a running torrent, active-download queue promotes, Move relocates data, close-to-tray and Run entry round-trip");
+        Console.WriteLine("PASS end-to-end: pipe forwarding adds a torrent, Files… edits a running torrent, active-download queue promotes, Move relocates data, Trackers… adds one, Delete files… confirms then removes data, close-to-tray and Run entry round-trip");
     }
 
     private static async Task VerifySettingsLayoutAsync(MainWindow main, double height)
@@ -469,6 +492,8 @@ internal static class UiSmoke
         // Preserve the pause intents while writing the final fixture fast-resume state.
         var state = BEncodedValue.Decode<BEncodedDictionary>(await File.ReadAllBytesAsync(paths.EngineStateFile));
         state["PausedInfoHashes"] = new BEncodedList(service.PausedInfoHashes.Select(hash => (BEncodedValue)new BEncodedString(hash)));
+        // Mark the fixture as a current-format queue so restore never seeds public trackers for it.
+        state["ExtraTrackers"] = new BEncodedDictionary();
         await File.WriteAllBytesAsync(paths.EngineStateFile, state.Encode());
         return paths;
     }

@@ -9,7 +9,7 @@ using MonoTorrent.Trackers;
 
 namespace FastTorrentDownload.Services;
 
-public sealed class TorrentEngineService : IAsyncDisposable
+public sealed partial class TorrentEngineService : IAsyncDisposable
 {
     private readonly AppPaths _paths;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -30,6 +30,12 @@ public sealed class TorrentEngineService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, (DateTimeOffset At, TorrentDiagnostics Value)> _diagnosticsCache = new();
     // Torrents that want to run but wait for a free slot under MaximumActiveDownloads.
     private readonly HashSet<string> _queuedHashes = new(StringComparer.OrdinalIgnoreCase);
+    // Trackers added after the torrent was created (public defaults and user additions), keyed by
+    // info-hash. MonoTorrent restores only the magnet's own trackers, so these are persisted here.
+    private readonly Dictionary<string, HashSet<string>> _extraTrackers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _restoreWarnings = [];
+    private bool _stateRecordsTrackers;
+    public const int MaxExtraTrackersPerTorrent = 50;
     public static TimeSpan StopAnnounceTimeout { get; } = TimeSpan.FromSeconds(2);
     private const int MaxCachedTorrentBytes = 10 * 1024 * 1024;
     // Peer enumeration and piece-coverage math run per torrent; refreshing them every second
@@ -73,12 +79,33 @@ public sealed class TorrentEngineService : IAsyncDisposable
                     if (saved.TryGetValue("PausedInfoHashes", out var paused) && paused is BEncodedList hashes)
                     {
                         _pausedHashes.Clear();
-                        _pausedHashes.UnionWith(hashes.Cast<BEncodedString>().Select(hash => hash.Text));
+                        _pausedHashes.UnionWith(hashes.OfType<BEncodedString>().Select(hash => hash.Text));
+                    }
+
+                    _stateRecordsTrackers = saved.ContainsKey("ExtraTrackers");
+                    if (saved.TryGetValue("ExtraTrackers", out var extra) && extra is BEncodedDictionary byHash)
+                    {
+                        foreach (var pair in byHash)
+                        {
+                            if (pair.Value is BEncodedList urls)
+                            {
+                                _extraTrackers[pair.Key.Text] = urls.OfType<BEncodedString>().Select(url => url.Text)
+                                    .Take(MaxExtraTrackersPerTorrent).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                            }
+                        }
                     }
                 }
                 catch (Exception exception) when (IsRecoverableStateException(exception))
                 {
-                    // A corrupt or incompatible cache must never prevent the client from opening.
+                    // A corrupt or incompatible state file must never prevent the client from opening.
+                    // Keep a copy: the next save would otherwise overwrite the only record of the queue.
+                    AppLogger.LogException("Saved queue could not be restored", exception);
+                    if (_engine is null)
+                    {
+                        _restoreWarnings.Add("The saved queue could not be read and was set aside as engine-state.json.corrupt. The queue starts empty; downloaded files are untouched.");
+                        try { File.Copy(_paths.EngineStateFile, _paths.EngineStateFile + ".corrupt", overwrite: true); }
+                        catch (Exception copyFailure) when (copyFailure is IOException or UnauthorizedAccessException) { }
+                    }
                 }
             }
 
@@ -86,11 +113,23 @@ public sealed class TorrentEngineService : IAsyncDisposable
             await _engine.UpdateSettingsAsync(CreateEngineSettings(_settings));
             AppLogger.Log($"Engine initialized: listen={_settings.ListenAddress}:{_settings.ListenPort} dht={_settings.EnableDht} pex={_settings.EnablePeerExchange} lpd={_settings.EnableLocalPeerDiscovery} upnp={_settings.EnablePortForwarding} restored={_engine.Torrents.Count} dhtState={_engine.Dht.State} dhtNodes={_engine.Dht.NodeCount} tuning={EnginePerformanceTuning.MaxConnections}c/{EnginePerformanceTuning.MaxHalfOpenConnections}half/{EnginePerformanceTuning.MaxConnectionsPerTorrent}pt");
 
-            foreach (var manager in _engine.Torrents)
+            foreach (var manager in _engine.Torrents.ToList())
             {
+                // The state file is plain data on disk: its paths get the same containment check as a new add.
+                if (!IsSafeRestoredTorrent(manager))
+                {
+                    var name = SanitizeDisplayName(manager.Name);
+                    AppLogger.Log("Restored torrent rejected: saved file paths leave the download folder.");
+                    _restoreWarnings.Add($"“{name}” was not restored: its saved file paths point outside its download folder.");
+                    _extraTrackers.Remove(DescribeInfoHashes(manager.InfoHashes));
+                    await _engine.RemoveAsync(manager);
+                    continue;
+                }
+
                 Track(manager, manager.SavePath);
                 await manager.UpdateSettingsAsync(CreateTorrentSettings(_settings));
                 await UpgradeLegacyTrackersAsync(manager);
+                await RestoreExtraTrackersAsync(manager);
                 await SplitTrackerTiersAsync(manager);
             }
 
@@ -195,346 +234,6 @@ public sealed class TorrentEngineService : IAsyncDisposable
             throw new InvalidOperationException("This torrent is already in the queue.");
         }
     }
-
-    private static async Task<Torrent> ResolveMagnetMetadataAsync(
-        ClientEngine engine, MagnetLink magnet, bool usePublicCaches, CancellationToken cancellationToken,
-        Action<string, string?>? onProgress)
-    {
-        using var raceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        raceCts.CancelAfter(TimeSpan.FromSeconds(60));
-        var progressTask = ReportMetadataProgressAsync(onProgress, raceCts.Token);
-        var swarmTask = DownloadMetadataWithTrackerRotationAsync(engine, magnet, raceCts.Token);
-        // The public caches learn the info-hash of every lookup, so they are strictly opt-in.
-        var cacheTask = usePublicCaches ? TryFetchCachedTorrentAsync(magnet, raceCts.Token) : Task.FromResult<Torrent?>(null);
-        try
-        {
-            if (await Task.WhenAny((Task)swarmTask, cacheTask) == cacheTask &&
-                await cacheTask is { } cached)
-            {
-                return cached;
-            }
-
-            return await swarmTask;
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException("No torrent file list was received within 60 seconds. Try again or use a .torrent file.");
-        }
-        finally
-        {
-            raceCts.Cancel();
-            // Await cleanup before registering the same hash in the payload engine.
-            try { await swarmTask; } catch (OperationCanceledException) { }
-            try { await cacheTask; } catch (OperationCanceledException) { }
-            try { await progressTask; } catch (OperationCanceledException) { }
-        }
-    }
-
-    private static async Task ReportMetadataProgressAsync(Action<string, string?>? onProgress, CancellationToken token)
-    {
-        var elapsed = 0;
-        while (!token.IsCancellationRequested)
-        {
-            onProgress?.Invoke($"Fetching torrent file list… ({elapsed}s / 60s)",
-                "Payload files will only download after you confirm the selection.");
-            await Task.Delay(1000, token);
-            elapsed++;
-        }
-    }
-
-    public static bool TryCacheMagnetTorrentBytes(MagnetLink magnet, byte[] torrentBytes, out Torrent? verifiedTorrent)
-    {
-        verifiedTorrent = null;
-        var hash = magnet.InfoHashes.V1?.ToHex().ToUpperInvariant();
-        if (string.IsNullOrWhiteSpace(hash) ||
-            torrentBytes is not { Length: > 32 and < MaxCachedTorrentBytes } ||
-            !Torrent.TryLoad(torrentBytes, out var loaded) ||
-            loaded.InfoHashes != magnet.InfoHashes)
-        {
-            return false;
-        }
-
-        // Only the info dictionary is covered by the info-hash check. Announce lists and
-        // webseeds supplied by a cache host are untrusted, so they never reach the engine.
-        var infoOnly = new BEncodedDictionary
-        {
-            ["info"] = BEncodedValue.Decode<BEncodedDictionary>(torrentBytes)["info"]
-        }.Encode();
-        if (!Torrent.TryLoad(infoOnly, out var stripped) || stripped.InfoHashes != magnet.InfoHashes)
-        {
-            return false;
-        }
-
-        CachedMagnetTorrents[hash] = infoOnly;
-        verifiedTorrent = stripped;
-        return true;
-    }
-
-    public static bool TryGetVerifiedCachedTorrent(MagnetLink magnet, out Torrent? torrent)
-    {
-        torrent = null;
-        var hash = magnet.InfoHashes.V1?.ToHex().ToUpperInvariant();
-        if (string.IsNullOrWhiteSpace(hash) ||
-            !CachedMagnetTorrents.TryGetValue(hash, out var bytes) ||
-            !Torrent.TryLoad(bytes, out var loaded) ||
-            loaded.InfoHashes != magnet.InfoHashes)
-        {
-            return false;
-        }
-
-        torrent = loaded;
-        return true;
-    }
-
-    public static async Task<Torrent?> TryFetchCachedTorrentAsync(MagnetLink magnet, CancellationToken cancellationToken)
-    {
-        if (TryGetVerifiedCachedTorrent(magnet, out var existing))
-        {
-            return existing;
-        }
-
-        var hash = magnet.InfoHashes.V1?.ToHex().ToUpperInvariant();
-        if (string.IsNullOrWhiteSpace(hash))
-        {
-            return null;
-        }
-
-        var task = InFlightMagnetPrefetches.GetOrAdd(hash, _ => FetchFromPublicCachesCoreAsync(magnet, hash));
-        try
-        {
-            return await task.WaitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            return null;
-        }
-    }
-
-    private static async Task<Torrent?> FetchFromPublicCachesCoreAsync(MagnetLink magnet, string hash)
-    {
-        try
-        {
-            string[] urls =
-            [
-                $"https://itorrents.org/torrent/{hash}.torrent",
-                $"https://torrage.info/torrent.php?h={hash}",
-                $"https://btcache.me/torrent/{hash}"
-            ];
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
-            var tasks = urls.Select(url => FetchSingleCacheUrlAsync(url, magnet, cts.Token)).ToList();
-            while (tasks.Count > 0)
-            {
-                var finished = await Task.WhenAny(tasks);
-                tasks.Remove(finished);
-                var result = await finished;
-                if (result is not null)
-                {
-                    cts.Cancel();
-                    return result;
-                }
-            }
-
-            return null;
-        }
-        finally
-        {
-            InFlightMagnetPrefetches.TryRemove(hash, out _);
-        }
-    }
-
-    private static async Task<Torrent?> FetchSingleCacheUrlAsync(string url, MagnetLink magnet, CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var response = await MetadataCacheHttpClient.GetAsync(url, HttpCompletionOption.ResponseContentRead, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                return null;
-            }
-
-            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-            return TryCacheMagnetTorrentBytes(magnet, bytes, out var verified) ? verified : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private async Task<TorrentManager> AddTorrentFromCachedMetadataAsync(
-        ClientEngine engine,
-        MagnetLink magnet,
-        Torrent cachedTorrent,
-        string safeDestination)
-    {
-        var manager = await engine.AddAsync(cachedTorrent, safeDestination, CreateTorrentSettings(_settings));
-        if (magnet.AnnounceUrls is not null)
-        {
-            foreach (var url in magnet.AnnounceUrls)
-            {
-                if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
-                {
-                    try { await manager.TrackerManager.AddTrackerAsync(uri); } catch { }
-                }
-            }
-        }
-
-        await SeedDefaultTrackersAsync(manager);
-        await SplitTrackerTiersAsync(manager);
-        return manager;
-    }
-
-    private static async Task TriggerImmediateAnnouncesAsync(TorrentManager manager)
-    {
-        try
-        {
-            await manager.TrackerManager.AnnounceAsync(CancellationToken.None);
-            if (manager.CanUseDht)
-            {
-                await manager.DhtAnnounceAsync();
-            }
-        }
-        catch
-        {
-            // Initial parallel announce kick-off is best-effort.
-        }
-    }
-
-    private static HttpClient CreateMetadataCacheHttpClient()
-    {
-        var client = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(5),
-            MaxResponseContentBufferSize = MaxCachedTorrentBytes
-        };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd($"Mozilla/5.0 (Windows NT 10.0; Win64; x64) FastTorrentDownload/{AppInfo.Version}");
-        return client;
-    }
-
-    private static async Task<Torrent> DownloadMetadataWithTrackerRotationAsync(
-        ClientEngine engine, MagnetLink magnet, CancellationToken cancellationToken)
-    {
-        var trackers = magnet.AnnounceUrls.Concat(DefaultPublicTrackers.Select(uri => uri.AbsoluteUri))
-            .Distinct().ToArray();
-        for (var attempt = 0; ; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var offset = attempt % trackers.Length;
-            var candidate = new MagnetLink(magnet.InfoHashes, magnet.Name,
-                [trackers[offset]], magnet.Webseeds, magnet.Size);
-            using var slice = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            if (attempt < 5)
-                slice.CancelAfter(TimeSpan.FromSeconds(attempt == 0 ? 20 : 30));
-            try
-            {
-                // This API cannot transition from metadata to payload download before validation.
-                var bytes = await engine.DownloadMetadataAsync(candidate, slice.Token);
-                return Torrent.Load(bytes.ToArray());
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                // One tracker per attempt avoids the library randomly selecting an empty tracker.
-            }
-        }
-    }
-
-    // Rescue for trackerless magnets: without trackers the fetch relies solely on DHT,
-    // which is slow and unreliable on a cold start. Every entry here was verified
-    // reachable; the scrape preflight below prunes any that report no peers for the
-    // torrent, so a dead entry only costs a few seconds.
-    public static IReadOnlyList<Uri> DefaultPublicTrackers { get; } =
-    [
-        new("udp://tracker.opentrackr.org:1337/announce"),
-        new("udp://open.stealth.si:80/announce"),
-        new("udp://tracker.torrent.eu.org:451/announce"),
-        new("udp://open.demonii.com:1337/announce"),
-        new("udp://exodus.desync.com:6969/announce"),
-        new("udp://explodie.org:6969/announce"),
-    ];
-
-    private static readonly HashSet<Uri> LegacyDeadDefaultTrackers =
-    [
-        new("https://opentracker.io/announce"),
-        new("https://torrent.eu.org/announce.php"),
-    ];
-
-    private static async Task SeedDefaultTrackersAsync(TorrentManager manager)
-    {
-        var existing = manager.TrackerManager.Tiers
-            .SelectMany(tier => tier.Trackers)
-            .Select(tracker => tracker.Uri)
-            .ToHashSet();
-        var added = 0;
-        foreach (var uri in DefaultPublicTrackers)
-        {
-            if (existing.Contains(uri))
-            {
-                continue;
-            }
-
-            try
-            {
-                await manager.TrackerManager.AddTrackerAsync(uri);
-                added++;
-            }
-            catch (Exception exception)
-            {
-                // A bad default entry must never break the add; DHT remains.
-                AppLogger.Log($"Default tracker: skipping {uri} ({exception.GetType().Name}).");
-            }
-        }
-
-        if (added > 0)
-        {
-            AppLogger.Log($"Default tracker: seeded {added} public trackers (total {CountTrackers(manager)}).");
-        }
-    }
-
-    private static async Task UpgradeLegacyTrackersAsync(TorrentManager manager)
-    {
-        var trackers = manager.TrackerManager.Tiers.SelectMany(tier => tier.Trackers).ToList();
-        var legacy = trackers.Where(tracker => LegacyDeadDefaultTrackers.Contains(tracker.Uri)).ToList();
-        if (legacy.Count == 0)
-        {
-            return;
-        }
-
-        foreach (var tracker in legacy)
-        {
-            await manager.TrackerManager.RemoveTrackerAsync(tracker);
-        }
-
-        await SeedDefaultTrackersAsync(manager);
-    }
-
-    private static async Task SplitTrackerTiersAsync(TorrentManager manager)
-    {
-        foreach (var tier in manager.TrackerManager.Tiers.ToList())
-        {
-            if (tier.Trackers.Count <= 1)
-            {
-                continue;
-            }
-
-            foreach (var tracker in tier.Trackers.Skip(1).ToList())
-            {
-                try
-                {
-                    await manager.TrackerManager.RemoveTrackerAsync(tracker);
-                    await manager.TrackerManager.AddTrackerAsync(tracker.Uri);
-                }
-                catch
-                {
-                    // Best-effort tier split must never break add or restore.
-                }
-            }
-        }
-    }
-
-    private static string DescribeInfoHashes(InfoHashes hashes) => hashes.V1OrV2.ToHex();
-
-    private static int CountTrackers(TorrentManager manager) =>
-        manager.TrackerManager.Tiers.SelectMany(tier => tier.Trackers).Count();
 
     public async Task CommitAddAsync(
         TorrentAddPreview preview,
@@ -679,63 +378,6 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     });
 
-    // Caller holds _gate. Starts the torrent, or parks it when the active-download limit is reached.
-    private async Task StartOrQueueAsync(TorrentManager manager)
-    {
-        var hash = DescribeInfoHashes(manager.InfoHashes);
-        if (_settings.MaximumActiveDownloads > 0 && CountActiveDownloads() >= _settings.MaximumActiveDownloads)
-        {
-            _queuedHashes.Add(hash);
-            return;
-        }
-
-        _queuedHashes.Remove(hash);
-        await manager.StartAsync();
-        _ = TriggerImmediateAnnouncesAsync(manager);
-    }
-
-    // Caller holds _gate. Fills free slots in queue order.
-    private async Task PromoteQueuedAsync()
-    {
-        if (_queuedHashes.Count == 0)
-        {
-            return;
-        }
-
-        foreach (var entry in _entries.Values)
-        {
-            if (!_queuedHashes.Contains(DescribeInfoHashes(entry.Manager.InfoHashes)))
-            {
-                continue;
-            }
-
-            if (_settings.MaximumActiveDownloads > 0 && CountActiveDownloads() >= _settings.MaximumActiveDownloads)
-            {
-                return;
-            }
-
-            try
-            {
-                await StartOrQueueAsync(entry.Manager);
-            }
-            catch (Exception exception)
-            {
-                AppLogger.LogException("Queued torrent failed to start", exception);
-            }
-        }
-    }
-
-    // A stalled torrent transfers nothing, so it must not keep queued torrents waiting.
-    private int CountActiveDownloads() =>
-        _entries.Count(entry => IsActiveState(entry.Value.Manager.State) && !_stalledIds.ContainsKey(entry.Key));
-
-    public static bool IsActiveState(TorrentState state) =>
-        state is TorrentState.Downloading or TorrentState.Metadata or TorrentState.Hashing
-            or TorrentState.Starting or TorrentState.Seeding or TorrentState.FetchingHashes;
-
-    public static bool ShouldQueue(int maximumActiveDownloads, int activeDownloads) =>
-        maximumActiveDownloads > 0 && activeDownloads >= maximumActiveDownloads;
-
     public async Task CancelAddAsync(string id)
     {
         await _gate.WaitAsync();
@@ -744,6 +386,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             var engine = RequireEngine();
             if (_pending.Remove(id, out var pending))
             {
+                _extraTrackers.Remove(DescribeInfoHashes(pending.Manager.InfoHashes));
                 await engine.RemoveAsync(pending.Manager);
             }
         }
@@ -754,6 +397,13 @@ public sealed class TorrentEngineService : IAsyncDisposable
     }
 
     public IReadOnlySet<string> PausedInfoHashes => _pausedHashes;
+
+    /// <summary>Problems found while restoring the saved queue; shown once after startup.</summary>
+    public IReadOnlyList<string> RestoreWarnings => _restoreWarnings;
+
+    private static bool IsSafeRestoredTorrent(TorrentManager manager) =>
+        manager.Files.Count == 0 ||
+        manager.Files.Select(file => file.Path).Prepend(manager.Name).All(path => PathGuard.IsSafeTorrentFilePath(manager.SavePath, path));
 
     public Task StartAsync(string id) => RunOperationAsync(id, "Starting…", async manager =>
     {
@@ -794,7 +444,8 @@ public sealed class TorrentEngineService : IAsyncDisposable
         finally { _gate.Release(); }
     }
 
-    public Task RemoveAsync(string id) => RunOperationAsync(id, "Stopping…", manager => RemoveCoreAsync(id, manager));
+    public Task RemoveAsync(string id, bool deleteFiles = false) =>
+        RunOperationAsync(id, "Stopping…", manager => RemoveCoreAsync(id, manager, deleteFiles));
 
     private async Task RunOperationAsync(string id, string operation, Func<TorrentManager, Task> action)
     {
@@ -816,8 +467,18 @@ public sealed class TorrentEngineService : IAsyncDisposable
                 if (_entries.ContainsKey(id) && File.Exists(_paths.EngineStateFile))
                 {
                     // Persist intent without forcing fast-resume writes during Starting / Hashing.
-                    var state = BEncodedValue.Decode<BEncodedDictionary>(await File.ReadAllBytesAsync(_paths.EngineStateFile));
-                    await WriteStateAsync(state);
+                    BEncodedDictionary? state = null;
+                    try
+                    {
+                        state = BEncodedValue.Decode<BEncodedDictionary>(await File.ReadAllBytesAsync(_paths.EngineStateFile));
+                    }
+                    catch (Exception exception) when (IsRecoverableStateException(exception))
+                    {
+                        // An unreadable state file is rebuilt from the live engine below.
+                    }
+
+                    if (state is null) await SaveStateAsync();
+                    else await WriteStateAsync(state);
                 }
             }
             finally { _gate.Release(); }
@@ -828,9 +489,11 @@ public sealed class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    private async Task RemoveCoreAsync(string id, TorrentManager manager)
+    private async Task RemoveCoreAsync(string id, TorrentManager manager, bool deleteFiles = false)
     {
         await manager.StopAsync(StopAnnounceTimeout);
+        var savePath = manager.SavePath;
+        var payloadFiles = manager.Files.Select(file => file.FullPath).ToArray();
         await _gate.WaitAsync();
         try
         {
@@ -847,6 +510,7 @@ public sealed class TorrentEngineService : IAsyncDisposable
             var hash = DescribeInfoHashes(entry.Manager.InfoHashes);
             _pausedHashes.Remove(hash);
             _queuedHashes.Remove(hash);
+            _extraTrackers.Remove(hash);
             _completionErrors.TryRemove(id, out _);
             _lastReannounce.TryRemove(id, out _);
             _lastScrape.TryRemove(id, out _);
@@ -858,6 +522,62 @@ public sealed class TorrentEngineService : IAsyncDisposable
         {
             _gate.Release();
         }
+
+        if (deleteFiles)
+        {
+            var deleted = DeleteDownloadedFiles(savePath, payloadFiles);
+            AppLogger.Log($"Removed torrent and deleted {deleted} of {payloadFiles.Length} payload file(s).");
+        }
+    }
+
+    /// <summary>
+    /// Deletes a removed torrent's payload files and the folders they leave empty. Only paths
+    /// inside <paramref name="savePath"/> are touched, and the save folder itself is never removed.
+    /// </summary>
+    public static int DeleteDownloadedFiles(string savePath, IReadOnlyCollection<string> files)
+    {
+        var deleted = 0;
+        var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in files)
+        {
+            if (!PathGuard.IsInsideFolder(savePath, file)) continue;
+            try
+            {
+                if (File.Exists(file))
+                {
+                    File.Delete(file);
+                    deleted++;
+                }
+
+                for (var folder = Path.GetDirectoryName(Path.GetFullPath(file));
+                     folder is not null && PathGuard.IsInsideFolder(savePath, folder);
+                     folder = Path.GetDirectoryName(folder))
+                {
+                    folders.Add(folder);
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                AppLogger.Log($"Could not delete a payload file ({exception.GetType().Name}).");
+            }
+        }
+
+        // Deepest first, so a parent is empty by the time it is tried.
+        foreach (var folder in folders.OrderByDescending(folder => folder.Length))
+        {
+            try
+            {
+                if (Directory.Exists(folder) && !Directory.EnumerateFileSystemEntries(folder).Any())
+                {
+                    Directory.Delete(folder);
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+
+        return deleted;
     }
 
     public async Task ApplySettingsAsync(AppSettings settings)
@@ -881,293 +601,6 @@ public sealed class TorrentEngineService : IAsyncDisposable
             _gate.Release();
         }
     }
-
-    public async Task<IReadOnlyList<TorrentSnapshot>> GetSnapshotsAsync(IReadOnlySet<string>? deferredCompletionIds = null)
-    {
-        KeyValuePair<string, (TorrentManager Manager, string Destination)>[] entries;
-        HashSet<string> queued;
-        await _gate.WaitAsync();
-        try
-        {
-            if (_engine is not null) await PromoteQueuedAsync();
-            entries = _entries.ToArray();
-            queued = new HashSet<string>(_queuedHashes, StringComparer.OrdinalIgnoreCase);
-        }
-        finally { _gate.Release(); }
-        var snapshots = new List<TorrentSnapshot>(entries.Length);
-        foreach (var pair in entries)
-        {
-            var manager = pair.Value.Manager;
-            if (ShouldRemoveCompletedTorrent(manager.State, manager.PartialProgress) &&
-                deferredCompletionIds?.Contains(pair.Key) != true &&
-                !_completionErrors.ContainsKey(pair.Key) && _operations.TryAdd(pair.Key, "Stopping…"))
-            {
-                _automaticRemovals[pair.Key] = CompleteAsync(pair.Key, manager, pair.Value.Destination);
-            }
-
-            var monitor = manager.Monitor;
-            var downloaded = monitor.DataBytesReceived;
-            TimeSpan? stalledFor = null;
-            if (manager.State == TorrentState.Downloading)
-            {
-                var now = DateTimeOffset.UtcNow;
-                var payload = _lastPayload.GetOrAdd(pair.Key, (downloaded, now));
-                if (payload.Received != downloaded)
-                {
-                    payload = (downloaded, now);
-                    _lastPayload[pair.Key] = payload;
-                }
-
-                if (IsStalled(manager.State, now - payload.At))
-                {
-                    stalledFor = now - payload.At;
-                }
-
-                var last = _lastReannounce.GetOrAdd(pair.Key, now);
-                if (ShouldReannounceStarvedTorrent(manager.State, manager.OpenConnections, now - last, stalledFor is not null) &&
-                    _lastReannounce.TryUpdate(pair.Key, now, last))
-                {
-                    _ = ReannounceStarvedTorrentAsync(manager);
-                }
-
-                // Scrape counts tell a dead swarm (0 seeders) apart from a slow one.
-                if (!_lastScrape.TryGetValue(pair.Key, out var scraped) || now - scraped >= ScrapeInterval)
-                {
-                    _lastScrape[pair.Key] = now;
-                    _ = ScrapeSwarmAsync(manager);
-                }
-            }
-            else
-            {
-                _lastReannounce.TryRemove(pair.Key, out _);
-                _lastPayload.TryRemove(pair.Key, out _);
-            }
-
-            var (selectedBytes, verifiedBytes) = GetSelectedBytes(manager);
-            var uploaded = monitor.DataBytesSent;
-            var swarm = ReadSwarm(manager);
-            var diagnostics = await GetCachedDiagnosticsAsync(pair.Key, manager) with
-            {
-                SwarmSeeders = swarm?.Seeders,
-                SwarmLeechers = swarm?.Leechers,
-                StalledFor = stalledFor
-            };
-            if (stalledFor is null)
-            {
-                _stalledIds.TryRemove(pair.Key, out _);
-            }
-            else if (_stalledIds.TryAdd(pair.Key, 0))
-            {
-                AppLogger.Log($"Torrent stalled: no payload for {(int)stalledFor.Value.TotalMinutes} min · swarm seeders={swarm?.Seeders.ToString() ?? "unknown"} leechers={swarm?.Leechers.ToString() ?? "unknown"} · connected={diagnostics.ConnectedPeers} connectedSeeders={diagnostics.ConnectedSeeders} · coverage={diagnostics.AvailablePiecesPercent?.ToString("0.0") ?? "unknown"}%");
-            }
-
-            var state = manager.State == TorrentState.Stopped && queued.Contains(DescribeInfoHashes(manager.InfoHashes))
-                ? "Queued"
-                : stalledFor is not null ? "Stalled" : manager.State.ToString();
-            snapshots.Add(new TorrentSnapshot(
-                pair.Key,
-                string.IsNullOrWhiteSpace(manager.Name) ? "Fetching metadata…" : manager.Name,
-                pair.Value.Destination,
-                state,
-                selectedBytes > 0 ? 100.0 * verifiedBytes / selectedBytes : manager.PartialProgress,
-                monitor.DownloadRate,
-                monitor.UploadRate,
-                downloaded,
-                uploaded,
-                diagnostics.ConnectedSeeders,
-                diagnostics.ConnectedPeers - diagnostics.ConnectedSeeders,
-                _operations.GetValueOrDefault(pair.Key),
-                selectedBytes,
-                verifiedBytes,
-                diagnostics));
-        }
-
-        // "Stalled" is deliberately absent: a dead swarm must not keep the computer awake.
-        _sleepGuard.Update(snapshots.Any(s => s.State is "Downloading" or "Metadata" or "Hashing" or "Starting"));
-        return snapshots;
-    }
-
-    private async Task<TorrentDiagnostics> GetCachedDiagnosticsAsync(string id, TorrentManager manager)
-    {
-        var now = DateTimeOffset.UtcNow;
-        if (_diagnosticsCache.TryGetValue(id, out var cached) && now - cached.At < DiagnosticsInterval)
-        {
-            return cached.Value;
-        }
-
-        var diagnostics = await GetDiagnosticsAsync(id, manager);
-        _diagnosticsCache[id] = (now, diagnostics);
-        return diagnostics;
-    }
-
-    public static bool ShouldReannounceStarvedTorrent(TorrentState state, int openConnections, TimeSpan elapsedSinceLastAnnounce, bool stalled = false) =>
-        state == TorrentState.Downloading &&
-        openConnections < EnginePerformanceTuning.LowPeerThreshold &&
-        elapsedSinceLastAnnounce >= (stalled ? EnginePerformanceTuning.StalledReannounceInterval : EnginePerformanceTuning.ReannounceInterval);
-
-    public static bool IsStalled(TorrentState state, TimeSpan sinceLastPayload) =>
-        state == TorrentState.Downloading && sinceLastPayload >= StallThreshold;
-
-    private static async Task ScrapeSwarmAsync(TorrentManager manager)
-    {
-        try
-        {
-            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            await manager.TrackerManager.ScrapeAsync(budget.Token);
-        }
-        catch
-        {
-            // Swarm counts are advisory; a failed scrape leaves them unknown.
-        }
-    }
-
-    // Best figure across tiers: trackers disagree, and one live seeder anywhere is enough.
-    private static (int Seeders, int Leechers)? ReadSwarm(TorrentManager manager)
-    {
-        (int Seeders, int Leechers)? best = null;
-        foreach (var tier in manager.TrackerManager.Tiers)
-        {
-            if (tier.ScrapeInfo.TryGetValue(manager.InfoHashes.V1OrV2, out var info))
-            {
-                best = (Math.Max(best?.Seeders ?? 0, info.Complete), Math.Max(best?.Leechers ?? 0, info.Incomplete));
-            }
-        }
-
-        return best;
-    }
-
-    private static async Task ReannounceStarvedTorrentAsync(TorrentManager manager)
-    {
-        try
-        {
-            await manager.TrackerManager.AnnounceAsync(CancellationToken.None);
-            if (manager.CanUseDht)
-            {
-                await manager.DhtAnnounceAsync();
-            }
-        }
-        catch
-        {
-            // Background swarm refresh must never disrupt active transfers.
-        }
-    }
-
-    private async Task CompleteAsync(string id, TorrentManager manager, string destination)
-    {
-        try
-        {
-            await RemoveCoreAsync(id, manager);
-            _completions.Enqueue(new TorrentCompletion(manager.Name, destination));
-        }
-        catch (Exception exception)
-        {
-            _completionErrors[id] = exception.Message;
-            _completions.Enqueue(new TorrentCompletion(manager.Name, destination, exception.Message));
-            AppLogger.LogException("Automatic removal failed", exception);
-        }
-        finally
-        {
-            _operations.TryRemove(id, out _);
-        }
-    }
-
-    public IReadOnlyList<TorrentCompletion> TakeCompletions()
-    {
-        var completed = new List<TorrentCompletion>();
-        while (_completions.TryDequeue(out var completion)) completed.Add(completion);
-        foreach (var item in _automaticRemovals.Where(item => item.Value.IsCompleted))
-            _automaticRemovals.TryRemove(item.Key, out _);
-        return completed;
-    }
-
-    public static bool ShouldRemoveCompletedTorrent(TorrentState state, double partialProgress) =>
-        state is TorrentState.Downloading or TorrentState.Seeding && partialProgress >= 100;
-
-    public static (long Selected, long Verified) GetSelectedBytes(TorrentManager manager)
-    {
-        if (manager.Torrent is not null && manager.Files.Count > 0 && manager.Files.All(file => file.Priority != Priority.DoNotDownload))
-        {
-            var total = manager.Torrent.Size;
-            if (manager.Bitfield.AllTrue) return (total, total);
-            if (manager.Bitfield.AllFalse || manager.Bitfield.Length == 0) return (total, 0);
-            var pieceLength = (long)manager.Torrent.PieceLength;
-            var verifiedBytes = (long)manager.Bitfield.TrueCount * pieceLength;
-            if (manager.Bitfield[^1])
-            {
-                var lastPieceSize = total - (long)(manager.Bitfield.Length - 1) * pieceLength;
-                verifiedBytes -= pieceLength - Math.Max(0, lastPieceSize);
-            }
-            return (total, Math.Clamp(verifiedBytes, 0, total));
-        }
-
-        long selected = 0, verified = 0;
-        foreach (var file in manager.Files.Where(file => file.Priority != Priority.DoNotDownload))
-        {
-            selected += file.Length;
-            if (file.BitField.AllTrue) { verified += file.Length; continue; }
-            if (file.BitField.AllFalse || manager.Torrent is null) continue;
-            // ponytail: scan partially verified files; cache piece-byte totals if million-piece torrents make this costly.
-            for (var index = 0; index < file.BitField.Length; index++)
-            {
-                if (!file.BitField[index]) continue;
-                var start = (long)(file.StartPieceIndex + index) * manager.Torrent.PieceLength;
-                verified += Math.Max(0, Math.Min(start + manager.Torrent.PieceLength, file.OffsetInTorrent + file.Length) - Math.Max(start, file.OffsetInTorrent));
-            }
-        }
-        return (selected, verified);
-    }
-
-    private async Task<TorrentDiagnostics> GetDiagnosticsAsync(string id, TorrentManager manager)
-    {
-        var known = manager.Peers.Available;
-        var connected = 0;
-        var receiving = 0;
-        var seeders = 0;
-        var incoming = 0;
-        double? coverage = null;
-        string? peerError = null;
-        try
-        {
-            var peers = (await manager.GetPeersAsync()).Where(peer => peer.IsConnected).ToArray();
-            connected = peers.Length;
-            known += connected;
-            receiving = peers.Count(peer => peer.Monitor.DownloadRate > 0);
-            incoming = peers.Count(peer => peer.ConnectionDirection == Direction.Incoming);
-            seeders = peers.Count(peer => peer.IsSeeder);
-            if (manager.HasMetadata)
-            {
-                if (manager.Bitfield.AllTrue || seeders > 0)
-                {
-                    coverage = 100.0;
-                }
-                else
-                {
-                    var pieces = new BitField(manager.Bitfield.Length).Or(manager.Bitfield);
-                    foreach (var peer in peers)
-                    {
-                        if (peer.BitField.Length == pieces.Length) pieces.Or(peer.BitField);
-                    }
-                    coverage = pieces.PercentComplete;
-                }
-            }
-        }
-        catch (Exception exception)
-        {
-            peerError = exception.Message;
-        }
-        var trackers = manager.TrackerManager.Tiers.SelectMany(tier => tier.Trackers)
-            .Select(tracker => new TrackerDiagnostic(tracker.Uri.GetLeftPart(UriPartial.Authority), tracker.Status.ToString(),
-                string.IsNullOrWhiteSpace(tracker.FailureMessage) ? tracker.WarningMessage : tracker.FailureMessage)).ToArray();
-        var error = _completionErrors.GetValueOrDefault(id)
-            ?? (manager.Error is { } engineError ? $"{engineError.Reason}: {engineError.Exception?.Message}" : null);
-        var engine = RequireEngine();
-        return new TorrentDiagnostics(known, connected, receiving, seeders, coverage,
-            _settings.EnableDht && manager.CanUseDht ? engine.Dht.State.ToString() : "Disabled for this torrent", engine.Dht.NodeCount,
-            EffectiveLimit(engine.Settings.MaximumDownloadRate, manager.Settings.MaximumDownloadRate),
-            EffectiveLimit(engine.Settings.MaximumUploadRate, manager.Settings.MaximumUploadRate), trackers, peerError, error, incoming, _settings.ListenPort);
-    }
-
-    public static long EffectiveLimit(long global, long torrent) => global <= 0 ? torrent : torrent <= 0 ? global : Math.Min(global, torrent);
 
     public async ValueTask DisposeAsync()
     {
@@ -1206,57 +639,6 @@ public sealed class TorrentEngineService : IAsyncDisposable
         {
             _gate.Release();
             _gate.Dispose();
-        }
-    }
-
-    // Caller holds _gate so queue changes cannot race the snapshot or file replacement.
-    private async Task SaveStateAsync(string? excludedId = null)
-    {
-        byte[] buffer;
-        for (var attempt = 0; ; attempt++)
-        {
-            try
-            {
-                buffer = await RequireEngine().SaveStateAsync();
-                break;
-            }
-            catch (IOException exception) when ((exception.HResult & 0xffff) is 32 or 33 && attempt < 4)
-            {
-                // MonoTorrent can still be writing fast-resume data after a state transition.
-                await Task.Delay(100);
-            }
-        }
-        var state = BEncodedValue.Decode<BEncodedDictionary>(buffer);
-        var committed = _entries.Where(entry => entry.Key != excludedId).Select(entry => entry.Value.Manager.MagnetLink.ToV1String()).ToHashSet();
-        var torrents = (BEncodedList)state[nameof(ClientEngine.Torrents)];
-        for (var index = torrents.Count - 1; index >= 0; index--)
-        {
-            if (!committed.Contains(((BEncodedString)((BEncodedDictionary)torrents[index])[nameof(TorrentManager.MagnetLink)]).Text))
-            {
-                torrents.RemoveAt(index);
-            }
-        }
-
-        var excludedHash = excludedId is not null && _entries.TryGetValue(excludedId, out var excluded)
-            ? DescribeInfoHashes(excluded.Manager.InfoHashes) : null;
-        await WriteStateAsync(state, excludedHash);
-    }
-
-    private async Task WriteStateAsync(BEncodedDictionary state, string? excludedHash = null)
-    {
-        state["PausedInfoHashes"] = new BEncodedList(_pausedHashes.Where(hash => hash != excludedHash).Select(hash => (BEncodedValue)new BEncodedString(hash)));
-        var temporaryFile = $"{_paths.EngineStateFile}.{Guid.NewGuid():N}.tmp";
-        try
-        {
-            await File.WriteAllBytesAsync(temporaryFile, state.Encode());
-            File.Move(temporaryFile, _paths.EngineStateFile, overwrite: true);
-        }
-        finally
-        {
-            if (File.Exists(temporaryFile))
-            {
-                File.Delete(temporaryFile);
-            }
         }
     }
 
@@ -1301,9 +683,6 @@ public sealed class TorrentEngineService : IAsyncDisposable
 
     private static int ToBytesPerSecond(int kibPerSecond) =>
         kibPerSecond <= 0 ? 0 : checked(kibPerSecond * 1024);
-
-    private static bool IsRecoverableStateException(Exception exception) =>
-        exception is IOException or InvalidDataException or ArgumentException or System.Text.Json.JsonException;
 
     private void Track(TorrentManager manager, string destination)
     {

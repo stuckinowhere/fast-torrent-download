@@ -1,0 +1,15 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="FastTorrentDownload.Views.DeleteFilesWindow"
+        Title="Delete downloaded files?" ShowInTaskbar="False" Width="520" SizeToContent="Height" CanResize="False" WindowStartupLocation="CenterOwner">
+  <StackPanel Margin="24" Spacing="14">
+    <TextBlock Text="Delete downloaded files?" FontSize="20" FontWeight="Bold" />
+    <TextBlock x:Name="NameTextBlock" FontWeight="SemiBold" TextWrapping="Wrap" />
+    <TextBlock x:Name="DetailTextBlock" TextWrapping="Wrap" Foreground="{DynamicResource MutedInkBrush}" />
+    <TextBlock Text="The torrent leaves the queue and its files are deleted from disk. This cannot be undone." TextWrapping="Wrap" />
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+      <Button Classes="dialog-footer" Content="Cancel" Click="Cancel_Click" IsCancel="True" />
+      <Button Classes="danger dialog-footer" Content="Delete files" Click="Delete_Click" />
+    </StackPanel>
+  </StackPanel>
+</Window>

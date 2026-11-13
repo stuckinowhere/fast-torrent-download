@@ -73,6 +73,10 @@ public sealed partial class MainViewModel(
         await _engine.InitializeAsync(_settings);
         await RefreshAsync();
         StatusMessage = "Ready — add a magnet link or .torrent file.";
+        foreach (var warning in _engine.RestoreWarnings)
+        {
+            NotifyActionFailure(warning);
+        }
     }
 
     public Task<TorrentAddPreview> PrepareAddAsync(
@@ -133,6 +137,30 @@ public sealed partial class MainViewModel(
 
     public Task RemoveTorrentAsync(string id) => RunRowActionAsync(id, "Stopping…", () => _engine.RemoveAsync(id),
         name => $"Stopping {name} before removing…", name => $"Removed {name}; downloaded files were kept.");
+
+    public Task DeleteTorrentAsync(string id) => RunRowActionAsync(id, "Stopping…", () => _engine.RemoveAsync(id, deleteFiles: true),
+        name => $"Stopping {name} before deleting its files…", name => $"Removed {name} and deleted its downloaded files.");
+
+    public async Task AddTrackersAsync(string id, string text)
+    {
+        var row = Torrents.FirstOrDefault(current => current.Id == id);
+        var (accepted, rejected) = TorrentEngineService.ParseTrackerUrls(text);
+        if (row is null || accepted.Count == 0)
+        {
+            NotifyActionFailure(rejected.Count == 0
+                ? "No tracker URLs were entered."
+                : $"No valid tracker URLs (udp, http or https). Ignored: {string.Join(", ", rejected.Take(3))}");
+            return;
+        }
+
+        var added = await _engine.AddTrackersAsync(id, accepted);
+        await RefreshAsync(waitForPending: true);
+        var ignored = rejected.Count == 0 ? string.Empty : $" Ignored {rejected.Count} invalid entr{(rejected.Count == 1 ? "y" : "ies")}.";
+        StatusMessage = added == 0
+            ? $"{row.Name} already had those trackers.{ignored}"
+            : $"Added {added} tracker{(added == 1 ? string.Empty : "s")} to {row.Name}.{ignored}";
+        ShowNotification(StatusMessage, null);
+    }
 
     public Task<TorrentAddPreview> GetFilesAsync(string id) => _engine.GetFilesAsync(id);
 

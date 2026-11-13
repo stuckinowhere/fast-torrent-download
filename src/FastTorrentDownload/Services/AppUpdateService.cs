@@ -7,12 +7,19 @@ namespace FastTorrentDownload.Services;
 public sealed class AppUpdateService
 {
     private static readonly HttpClient Client = CreateClient();
+    private const int MaxChecksumBytes = 4096;
 
     public async Task<string> DownloadAndVerifyAsync(
         AvailableUpdate update,
         IProgress<double>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        // The tag becomes a folder name and is echoed by the updater script: accept version text only.
+        if (!IsSafeTag(update.Tag))
+        {
+            throw new InvalidDataException("The release tag is not a plain version number; the update was not downloaded.");
+        }
+
         var workDirectory = Directory.CreateDirectory(Path.Combine(
             Path.GetTempPath(), "fast-torrent-download-update", update.Tag.TrimStart('v', 'V'))).FullName;
         var packagePath = Path.Combine(workDirectory, "update-portable.zip");
@@ -22,6 +29,7 @@ public sealed class AppUpdateService
         var actualHash = await HashFileAsync(packagePath, cancellationToken);
         if (!string.Equals(expectedHash, actualHash, StringComparison.OrdinalIgnoreCase))
         {
+            try { File.Delete(packagePath); } catch (IOException) { }
             throw new InvalidDataException("The update package failed its checksum verification and was discarded.");
         }
 
@@ -29,8 +37,16 @@ public sealed class AppUpdateService
         return packagePath;
     }
 
+    public static bool IsSafeTag(string? tag) =>
+        tag is not null && System.Text.RegularExpressions.Regex.IsMatch(tag, @"^[vV]?\d{1,5}(\.\d{1,5}){1,3}$");
+
     public void StageAndLaunchInstaller(string packagePath, string tag)
     {
+        if (!IsSafeTag(tag))
+        {
+            throw new InvalidDataException("The release tag is not a plain version number; the update was not installed.");
+        }
+
         var installDirectory = AppContext.BaseDirectory;
         var executablePath = Path.Combine(installDirectory, "FastTorrentDownload.exe");
         if (!File.Exists(executablePath))
@@ -40,7 +56,14 @@ public sealed class AppUpdateService
 
         var workDirectory = Path.GetDirectoryName(packagePath)
             ?? throw new InvalidOperationException("Cannot self-update: the package path has no directory.");
-        var stageDirectory = Directory.CreateDirectory(Path.Combine(workDirectory, "staged")).FullName;
+        var stageDirectory = Path.Combine(workDirectory, "staged");
+        // Start from an empty folder: leftovers from an earlier attempt must never be copied into the install.
+        if (Directory.Exists(stageDirectory))
+        {
+            Directory.Delete(stageDirectory, recursive: true);
+        }
+
+        Directory.CreateDirectory(stageDirectory);
         ZipFile.ExtractToDirectory(packagePath, stageDirectory, overwriteFiles: true);
         if (!File.Exists(Path.Combine(stageDirectory, "FastTorrentDownload.exe")))
         {
@@ -108,8 +131,20 @@ public sealed class AppUpdateService
 
     private async Task<string> ReadExpectedHashAsync(Uri checksumUrl, CancellationToken cancellationToken)
     {
-        using var response = await Client.GetAsync(checksumUrl, cancellationToken);
+        using var response = await Client.GetAsync(checksumUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
+        if (response.RequestMessage?.RequestUri is { } finalUri && !ReleaseUpdateService.IsDownloadHost(finalUri))
+        {
+            throw new InvalidOperationException("The update checksum redirected to an untrusted host.");
+        }
+
+        // A checksum file is one short line; refuse anything that is not.
+        if (response.Content.Headers.ContentLength is > MaxChecksumBytes)
+        {
+            throw new InvalidDataException("The update checksum file is unexpectedly large.");
+        }
+
+        await response.Content.LoadIntoBufferAsync(MaxChecksumBytes, cancellationToken);
         var content = await response.Content.ReadAsStringAsync(cancellationToken);
         // The checksum asset is named "<package>.sha256"; recover the package file name from it.
         var checksumName = PackageFileName(checksumUrl);

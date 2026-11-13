@@ -18,9 +18,12 @@ if (Test-Path -LiteralPath $publishRoot) {
 }
 
 New-Item -ItemType Directory -Force -Path $publishRoot | Out-Null
+# Single-file publish adds SDK-implicit packages. They get their own lock file under artifacts\,
+# so the committed packages.lock.json (checked by CI in locked mode) is never rewritten here.
 & dotnet publish (Join-Path $projectRoot 'src\\FastTorrentDownload\\FastTorrentDownload.csproj') `
     --configuration Release --runtime win-x64 --self-contained true `
     -p:PublishSingleFile=true -p:PublishTrimmed=false -p:Version=$Version `
+    "-p:NuGetLockFilePath=$(Join-Path $artifactsRoot 'packages.publish.lock.json')" `
     --output $publishRoot
 
 if (Test-Path -LiteralPath $zipPath) {

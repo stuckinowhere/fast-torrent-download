@@ -13,13 +13,29 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 10.0.x
+      - name: Restore (locked)
+        run: dotnet restore FastTorrentDownload.sln --locked-mode
       - name: Build
-        run: dotnet build FastTorrentDownload.sln --configuration Release --nologo
+        run: dotnet build FastTorrentDownload.sln --configuration Release --nologo --no-restore
       - name: Run focused checks
-        run: dotnet run --project tests/FastTorrentDownload.Tests/FastTorrentDownload.Tests.csproj --configuration Release
+        shell: pwsh
+        run: |
+          dotnet run --project tests/FastTorrentDownload.Tests/FastTorrentDownload.Tests.csproj --configuration Release --no-build | Tee-Object -FilePath checks.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Summarize checks
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path checks.log)) { "### Focused checks`n`nThe checks did not run." >> $env:GITHUB_STEP_SUMMARY; exit 0 }
+          $lines = Get-Content checks.log
+          $passed = @($lines | Where-Object { $_ -like 'PASS *' -and $_ -notmatch '^PASS \d+ focused checks$' })
+          "### Focused checks`n`n$($passed.Count) passed`n" >> $env:GITHUB_STEP_SUMMARY
+          $passed | ForEach-Object { "- $($_.Substring(5))" } >> $env:GITHUB_STEP_SUMMARY
+          $other = @($lines | Where-Object { $_ -notlike 'PASS *' })
+          if ($other.Count -gt 0) { "`n<details><summary>Other output</summary>`n`n``````text" >> $env:GITHUB_STEP_SUMMARY; $other | Select-Object -Last 60 >> $env:GITHUB_STEP_SUMMARY; "```````n</details>" >> $env:GITHUB_STEP_SUMMARY }

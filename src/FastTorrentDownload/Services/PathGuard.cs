@@ -84,6 +84,30 @@ public static class PathGuard
         }
     }
 
+    /// <summary>True when <paramref name="path"/> resolves strictly inside <paramref name="folder"/>.</summary>
+    public static bool IsInsideFolder(string folder, string path)
+    {
+        try
+        {
+            var root = Path.GetFullPath(folder);
+            var prefix = root.EndsWith(Path.DirectorySeparatorChar) || root.EndsWith(Path.AltDirectorySeparatorChar)
+                ? root
+                : root + Path.DirectorySeparatorChar;
+            return Path.GetFullPath(path).StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>UNC shares and device paths: reading one makes Windows contact or open something the user did not pick.</summary>
+    public static bool IsRemoteOrDevicePath(string? path)
+    {
+        var trimmed = path?.Trim() ?? string.Empty;
+        return trimmed.StartsWith(@"\\", StringComparison.Ordinal) || trimmed.StartsWith("//", StringComparison.Ordinal);
+    }
+
     public static void ThrowIfUnsafeTorrentFiles(string destinationRoot, IEnumerable<string> filePaths)
     {
         foreach (var filePath in filePaths)

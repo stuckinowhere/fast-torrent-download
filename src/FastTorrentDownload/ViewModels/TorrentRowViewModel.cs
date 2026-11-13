@@ -61,6 +61,8 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     private TorrentDiagnostics? _diagnostics = snapshot.Diagnostics;
 
     public string ProgressLabel => $"{Progress:0.0}%";
+    public string VerifiedSizeLabel => TransferFormatting.Bytes(_verifiedBytes);
+    public IReadOnlyList<TrackerDiagnostic> Trackers => _diagnostics?.Trackers ?? [];
     public string TransferLabel => $"↓ {FormatRate(_downloadRate)}   ↑ {FormatRate(_uploadRate)}";
     // A stalled row says why instead of an ETA that will never arrive.
     private string ProgressOutlook => State switch
