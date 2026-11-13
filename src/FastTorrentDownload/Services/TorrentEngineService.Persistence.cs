@@ -49,6 +49,7 @@ public sealed partial class TorrentEngineService
     {
         state["PausedInfoHashes"] = new BEncodedList(_pausedHashes.Where(hash => hash != excludedHash).Select(hash => (BEncodedValue)new BEncodedString(hash)));
         var committed = _entries.Values.Select(entry => DescribeInfoHashes(entry.Manager.InfoHashes)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        state["SequentialInfoHashes"] = new BEncodedList(_sequentialHashes.Where(hash => hash != excludedHash && committed.Contains(hash)).Select(hash => (BEncodedValue)new BEncodedString(hash)));
         var extraTrackers = new BEncodedDictionary();
         foreach (var pair in _extraTrackers.Where(pair => pair.Key != excludedHash && committed.Contains(pair.Key)))
         {

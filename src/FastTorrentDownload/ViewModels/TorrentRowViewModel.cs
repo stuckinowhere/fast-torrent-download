@@ -19,19 +19,19 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     public bool CanResume => CanAct && !CanPause;
     public string StateLabel => Operation ?? State;
     // Engine state names are developer vocabulary; the chip speaks the user's.
-    public string StateDisplay => Operation ?? State switch
+    public string StateDisplay => Loc.Known(Operation ?? State switch
     {
         "Metadata" => "Fetching file list",
         "Hashing" or "FetchingHashes" => "Checking files",
         "HashingPaused" => "Check paused",
         "Stopped" or "Paused" => Progress >= 100 ? "Complete" : "Paused",
         _ => State
-    };
+    });
     public bool IsRunningState => Operation is null && State is "Downloading" or "Seeding" or "Metadata" or "Hashing" or "FetchingHashes" or "Starting";
     public bool IsStalledState => Operation is null && State == "Stalled";
     public bool IsErrorState => Operation is null && State == "Error";
     [ObservableProperty] private bool _isDetailsOpen;
-    public string DetailsToggleLabel => IsDetailsOpen ? "Hide details" : "Details";
+    public string DetailsToggleLabel => IsDetailsOpen ? Loc.T("Hide details") : Loc.T("Details");
     partial void OnIsDetailsOpenChanged(bool value) => OnPropertyChanged(nameof(DetailsToggleLabel));
     partial void OnOperationChanged(string? value) => NotifyActionState();
     partial void OnStateChanged(string value) => NotifyActionState();
@@ -59,6 +59,7 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     private long _selectedBytes = snapshot.SelectedBytes;
     private long _verifiedBytes = snapshot.VerifiedBytes;
     private TorrentDiagnostics? _diagnostics = snapshot.Diagnostics;
+    private bool _sequential = snapshot.Sequential;
 
     public string ProgressLabel => $"{Progress:0.0}%";
     public string VerifiedSizeLabel => TransferFormatting.Bytes(_verifiedBytes);
@@ -67,18 +68,34 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     // A stalled row says why instead of an ETA that will never arrive.
     private string ProgressOutlook => State switch
     {
-        "Queued" => "waiting for a free download slot",
-        "Stopped" or "Paused" => _selectedBytes > 0 && _verifiedBytes >= _selectedBytes ? "Complete" : "paused",
+        "Queued" => Loc.T("waiting for a free download slot"),
+        "Stopped" or "Paused" => _selectedBytes > 0 && _verifiedBytes >= _selectedBytes ? Loc.T("Complete") : Loc.T("paused"),
         _ => _diagnostics?.StallSummary ?? TransferFormatting.Remaining(_verifiedBytes, _selectedBytes, _downloadRate, State)
     };
     // Peer counts and an ETA mean nothing for a torrent that is not running.
     private bool ShowsPeers => State is not ("Stopped" or "Paused" or "Queued" or "Error");
     private string PeerSummary => _diagnostics?.PeerError is not null
-        ? "peer statistics unavailable"
-        : $"{_seederCount} connected seeders · {_leecherCount} other peers";
-    public string DetailLabel => $"{TransferFormatting.Bytes(_verifiedBytes)} / {TransferFormatting.Bytes(_selectedBytes)} verified · {ProgressOutlook}{(ShowsPeers ? " · " + PeerSummary : string.Empty)}";
-    public string SessionLabel => $"Session received {TransferFormatting.Bytes(_downloadedBytes)} · sent {TransferFormatting.Bytes(_uploadedBytes)}";
-    public string DiagnosticsText => $"Torrent state: {StateLabel}\n{_diagnostics?.Describe(_downloadRate) ?? "Diagnostics not available yet."}";
+        ? Loc.T("peer statistics unavailable")
+        : Loc.I($"{_seederCount} connected seeders · {_leecherCount} other peers");
+    public string DetailLabel => $"{TransferFormatting.Bytes(_verifiedBytes)} / {TransferFormatting.Bytes(_selectedBytes)} {Loc.T("verified")} · {ProgressOutlook}{(_sequential ? " · " + Loc.T("in order") : string.Empty)}{(ShowsPeers ? " · " + PeerSummary : string.Empty)}";
+    public string SessionLabel
+    {
+        get
+        {
+            var received = TransferFormatting.Bytes(_downloadedBytes);
+            var sent = TransferFormatting.Bytes(_uploadedBytes);
+            return Loc.I($"Session received {received} · sent {sent}");
+        }
+    }
+
+    public string DiagnosticsText
+    {
+        get
+        {
+            var state = Loc.Known(StateLabel);
+            return Loc.I($"Torrent state: {state}") + "\n" + (_diagnostics?.Describe(_downloadRate) ?? Loc.T("Diagnostics not available yet."));
+        }
+    }
 
     public void Update(TorrentSnapshot snapshot)
     {
@@ -96,6 +113,7 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
         _selectedBytes = snapshot.SelectedBytes;
         _verifiedBytes = snapshot.VerifiedBytes;
         _diagnostics = snapshot.Diagnostics;
+        _sequential = snapshot.Sequential;
         OnPropertyChanged(nameof(TransferLabel));
         OnPropertyChanged(nameof(DetailLabel));
         OnPropertyChanged(nameof(SessionLabel));

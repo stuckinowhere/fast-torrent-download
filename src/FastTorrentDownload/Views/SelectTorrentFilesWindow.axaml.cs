@@ -1,3 +1,4 @@
+using FastTorrentDownload.Services;
 using System.Collections.ObjectModel;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -23,6 +24,9 @@ public sealed partial class TorrentFileSelectionItem : ObservableObject
     private bool _isSelected;
 }
 
+/// <summary>What the dialog returns: the files to download and whether to fetch them in order.</summary>
+public sealed record FileSelection(string[] Files, bool Sequential);
+
 public partial class SelectTorrentFilesWindow : Window
 {
     public SelectTorrentFilesWindow(string torrentName, bool editing = false)
@@ -30,13 +34,14 @@ public partial class SelectTorrentFilesWindow : Window
         Files = new ObservableCollection<TorrentFileSelectionItem>();
         DataContext = this;
         InitializeComponent();
+        Loc.Apply(this);
         TorrentNameTextBlock.Text = torrentName;
         if (editing)
         {
-            Title = "Change downloaded files";
-            HeadingTextBlock.Text = "Change files to download";
-            HintTextBlock.Text = "Deselected files stop downloading; already written data stays on disk.";
-            AddSelectedButton.Content = "Apply selection";
+            Title = Loc.T("Change downloaded files");
+            HeadingTextBlock.Text = Loc.T("Change files to download");
+            HintTextBlock.Text = Loc.T("Deselected files stop downloading; already written data stays on disk.");
+            AddSelectedButton.Content = Loc.T("Apply selection");
         }
     }
 
@@ -64,6 +69,8 @@ public partial class SelectTorrentFilesWindow : Window
         SelectAllButton.IsEnabled = true;
         SelectNoneButton.IsEnabled = true;
         AddSelectedButton.IsEnabled = true;
+        SequentialCheckBox.IsChecked = preview.Sequential;
+        SequentialCheckBox.IsEnabled = true;
     }
 
     private void UpdateSelectionSummary()
@@ -79,7 +86,7 @@ public partial class SelectTorrentFilesWindow : Window
             }
         }
 
-        SelectionSummaryTextBlock.Text = $"{selectedCount} / {Files.Count} selected · {Services.TransferFormatting.Bytes(selectedBytes)}";
+        SelectionSummaryTextBlock.Text = Loc.I($"{selectedCount} / {Files.Count} selected · {Services.TransferFormatting.Bytes(selectedBytes)}");
     }
 
     public void UpdateLoadingStatus(string status, string? detail = null)
@@ -131,11 +138,11 @@ public partial class SelectTorrentFilesWindow : Window
         var selected = Files.Where(file => file.IsSelected).Select(file => file.Path).ToArray();
         if (selected.Length == 0)
         {
-            StatusTextBlock.Text = "Select at least one file to download.";
+            StatusTextBlock.Text = Loc.T("Select at least one file to download.");
             StatusTextBlock.IsVisible = true;
             return;
         }
 
-        Close(selected);
+        Close(new FileSelection(selected, SequentialCheckBox.IsChecked == true));
     }
 }

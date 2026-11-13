@@ -11,6 +11,8 @@ public sealed class AppSettings
     public bool EnablePeerExchange { get; set; } = true;
     public bool EnableLocalPeerDiscovery { get; set; } = false;
     public bool EnablePortForwarding { get; set; } = true;
+    /// <summary>Also listen for IPv6 peers when the listener is bound to all interfaces.</summary>
+    public bool EnableIPv6 { get; set; } = true;
     public bool RequireEncryptedPeerConnections { get; set; }
     /// <summary>Opt-in: public .torrent caches learn the info-hash of every magnet looked up.</summary>
     public bool UsePublicMetadataCaches { get; set; }
@@ -18,7 +20,11 @@ public sealed class AppSettings
     public int MaximumUploadKiBPerSecond { get; set; }
     /// <summary>0 = unlimited. Torrents beyond the limit wait as "Queued" until a slot frees up.</summary>
     public int MaximumActiveDownloads { get; set; }
+    /// <summary>New torrents download their pieces in order (first file first) unless changed per torrent.</summary>
+    public bool SequentialByDefault { get; set; }
     public string Theme { get; set; } = "System";
+    /// <summary>"System" follows the Windows display language; "English" and "Español" force one.</summary>
+    public string Language { get; set; } = "System";
     public bool ConfirmCloseBeforeExit { get; set; } = true;
     public bool CloseToTray { get; set; } = true;
     public bool StartWithWindows { get; set; }
@@ -44,6 +50,7 @@ public sealed class AppSettings
         MaximumUploadKiBPerSecond = Math.Max(0, MaximumUploadKiBPerSecond);
         MaximumActiveDownloads = Math.Max(0, MaximumActiveDownloads);
         Theme = Theme is "Light" or "Dark" or "System" ? Theme : "System";
+        Language = Language is "English" or "Español" or "System" ? Language : "System";
         PausedInfoHashes = new HashSet<string>(
             PausedInfoHashes.Where(hash => !string.IsNullOrWhiteSpace(hash)),
             StringComparer.OrdinalIgnoreCase);

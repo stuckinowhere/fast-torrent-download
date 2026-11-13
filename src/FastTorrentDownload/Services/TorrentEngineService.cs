@@ -30,6 +30,8 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, (DateTimeOffset At, TorrentDiagnostics Value)> _diagnosticsCache = new();
     // Torrents that want to run but wait for a free slot under MaximumActiveDownloads.
     private readonly HashSet<string> _queuedHashes = new(StringComparer.OrdinalIgnoreCase);
+    // Torrents whose pieces are requested in order instead of rarest-first.
+    private readonly HashSet<string> _sequentialHashes = new(StringComparer.OrdinalIgnoreCase);
     // Trackers added after the torrent was created (public defaults and user additions), keyed by
     // info-hash. MonoTorrent restores only the magnet's own trackers, so these are persisted here.
     private readonly Dictionary<string, HashSet<string>> _extraTrackers = new(StringComparer.OrdinalIgnoreCase);
@@ -82,6 +84,11 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
                         _pausedHashes.UnionWith(hashes.OfType<BEncodedString>().Select(hash => hash.Text));
                     }
 
+                    if (saved.TryGetValue("SequentialInfoHashes", out var ordered) && ordered is BEncodedList orderedHashes)
+                    {
+                        _sequentialHashes.UnionWith(orderedHashes.OfType<BEncodedString>().Select(hash => hash.Text));
+                    }
+
                     _stateRecordsTrackers = saved.ContainsKey("ExtraTrackers");
                     if (saved.TryGetValue("ExtraTrackers", out var extra) && extra is BEncodedDictionary byHash)
                     {
@@ -102,7 +109,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
                     AppLogger.LogException("Saved queue could not be restored", exception);
                     if (_engine is null)
                     {
-                        _restoreWarnings.Add("The saved queue could not be read and was set aside as engine-state.json.corrupt. The queue starts empty; downloaded files are untouched.");
+                        _restoreWarnings.Add(Loc.T("The saved queue could not be read and was set aside as engine-state.json.corrupt. The queue starts empty; downloaded files are untouched."));
                         try { File.Copy(_paths.EngineStateFile, _paths.EngineStateFile + ".corrupt", overwrite: true); }
                         catch (Exception copyFailure) when (copyFailure is IOException or UnauthorizedAccessException) { }
                     }
@@ -120,7 +127,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
                 {
                     var name = SanitizeDisplayName(manager.Name);
                     AppLogger.Log("Restored torrent rejected: saved file paths leave the download folder.");
-                    _restoreWarnings.Add($"“{name}” was not restored: its saved file paths point outside its download folder.");
+                    _restoreWarnings.Add(Loc.I($"“{name}” was not restored: its saved file paths point outside its download folder."));
                     _extraTrackers.Remove(DescribeInfoHashes(manager.InfoHashes));
                     await _engine.RemoveAsync(manager);
                     continue;
@@ -128,6 +135,10 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
 
                 Track(manager, manager.SavePath);
                 await manager.UpdateSettingsAsync(CreateTorrentSettings(_settings));
+                if (_sequentialHashes.Contains(DescribeInfoHashes(manager.InfoHashes)))
+                {
+                    await ApplyPickerAsync(manager, sequential: true);
+                }
                 await UpgradeLegacyTrackersAsync(manager);
                 await RestoreExtraTrackersAsync(manager);
                 await SplitTrackerTiersAsync(manager);
@@ -219,7 +230,8 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
             return new TorrentAddPreview(
                 id,
                 string.IsNullOrWhiteSpace(cleanName) ? "Torrent" : cleanName,
-                manager.Files.Select(file => new TorrentFilePreview(file.Path, file.Length)).ToArray());
+                manager.Files.Select(file => new TorrentFilePreview(file.Path, file.Length)).ToArray(),
+                _settings.SequentialByDefault);
         }
         finally
         {
@@ -238,7 +250,8 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
     public async Task CommitAddAsync(
         TorrentAddPreview preview,
         IReadOnlyCollection<string> selectedFiles,
-        bool startImmediately)
+        bool startImmediately,
+        bool sequential = false)
     {
         if (selectedFiles.Count == 0)
         {
@@ -266,6 +279,8 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
             {
                 _pausedHashes.Add(hash);
             }
+
+            await SetSequentialAsync(pending.Manager, sequential);
             try
             {
                 await SaveStateAsync();
@@ -275,6 +290,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
                 _entries.Remove(preview.Id);
                 _pending[preview.Id] = pending;
                 _pausedHashes.Remove(hash);
+                _sequentialHashes.Remove(hash);
                 throw;
             }
             await SplitTrackerTiersAsync(pending.Manager);
@@ -302,6 +318,41 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
         }
     }
 
+    // Linear picking: with randomisation and rarest-first both off MonoTorrent requests pieces by
+    // ascending index, so the first selected file completes first and media can be opened early.
+    private static readonly MonoTorrent.PiecePicking.PieceRequesterSettings SequentialPicking =
+        new(allowPrioritisation: true, allowRandomised: false, allowRarestFirst: false);
+
+    private static Task ApplyPickerAsync(TorrentManager manager, bool sequential) =>
+        manager.ChangePickerAsync(new MonoTorrent.PiecePicking.StandardPieceRequester(
+            sequential ? SequentialPicking : MonoTorrent.PiecePicking.PieceRequesterSettings.Default));
+
+    // Caller holds _gate.
+    private async Task SetSequentialAsync(TorrentManager manager, bool sequential)
+    {
+        var hash = DescribeInfoHashes(manager.InfoHashes);
+        if (sequential == _sequentialHashes.Contains(hash))
+        {
+            return;
+        }
+
+        // MonoTorrent only accepts a new piece requester while the torrent is stopped, so a running
+        // torrent is stopped, switched and started again; verified data is kept.
+        var restart = manager.State != TorrentState.Stopped;
+        if (restart)
+        {
+            await manager.StopAsync(StopAnnounceTimeout);
+        }
+
+        await ApplyPickerAsync(manager, sequential);
+        if (sequential) _sequentialHashes.Add(hash);
+        else _sequentialHashes.Remove(hash);
+        if (restart && !_pausedHashes.Contains(hash))
+        {
+            await StartOrQueueAsync(manager);
+        }
+    }
+
     public async Task<TorrentAddPreview> GetFilesAsync(string id)
     {
         await _gate.WaitAsync();
@@ -311,7 +362,8 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
             return new TorrentAddPreview(
                 id,
                 SanitizeDisplayName(manager.Name),
-                manager.Files.Select(file => new TorrentFilePreview(file.Path, file.Length, file.Priority != Priority.DoNotDownload)).ToArray());
+                manager.Files.Select(file => new TorrentFilePreview(file.Path, file.Length, file.Priority != Priority.DoNotDownload)).ToArray(),
+                _sequentialHashes.Contains(DescribeInfoHashes(manager.InfoHashes)));
         }
         finally
         {
@@ -319,7 +371,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    public Task SetSelectedFilesAsync(string id, IReadOnlyCollection<string> selectedFiles)
+    public Task SetSelectedFilesAsync(string id, IReadOnlyCollection<string> selectedFiles, bool? sequential = null)
     {
         if (selectedFiles.Count == 0)
         {
@@ -331,7 +383,11 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
             await ApplyFileSelectionAsync(manager, selectedFiles);
             // Priorities live in the engine state, not in the fast-resume data the operation epilogue preserves.
             await _gate.WaitAsync();
-            try { await SaveStateAsync(); }
+            try
+            {
+                if (sequential is { } ordered) await SetSequentialAsync(manager, ordered);
+                await SaveStateAsync();
+            }
             finally { _gate.Release(); }
         });
     }
@@ -510,6 +566,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
             var hash = DescribeInfoHashes(entry.Manager.InfoHashes);
             _pausedHashes.Remove(hash);
             _queuedHashes.Remove(hash);
+            _sequentialHashes.Remove(hash);
             _extraTrackers.Remove(hash);
             _completionErrors.TryRemove(id, out _);
             _lastReannounce.TryRemove(id, out _);
@@ -656,10 +713,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
             AllowedEncryption = EnginePerformanceTuning.GetAllowedEncryption(settings.RequireEncryptedPeerConnections).ToList(),
             ConnectionTimeout = EnginePerformanceTuning.ConnectionTimeout,
             DhtEndPoint = settings.EnableDht ? new IPEndPoint(listenAddress, settings.ListenPort) : null,
-            ListenEndPoints = new Dictionary<string, IPEndPoint>
-            {
-                ["ipv4"] = new(listenAddress, settings.ListenPort)
-            },
+            ListenEndPoints = CreateListenEndPoints(settings),
             MaximumDownloadRate = ToBytesPerSecond(settings.MaximumDownloadKiBPerSecond),
             MaximumUploadRate = ToBytesPerSecond(settings.MaximumUploadKiBPerSecond),
             MaximumConnections = EnginePerformanceTuning.MaxConnections,
@@ -668,6 +722,22 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
             WebSeedDelay = EnginePerformanceTuning.WebSeedDelay
         };
         return builder.ToSettings();
+    }
+
+    /// <summary>
+    /// IPv4 always; IPv6 as well when enabled, supported by the OS and the listener is not pinned
+    /// to one IPv4 address (pinning is how a user confines the client to a single interface).
+    /// </summary>
+    public static Dictionary<string, IPEndPoint> CreateListenEndPoints(AppSettings settings, bool? osSupportsIPv6 = null)
+    {
+        var listenAddress = NetworkBinding.ResolveListenAddress(settings.ListenAddress);
+        var endpoints = new Dictionary<string, IPEndPoint> { ["ipv4"] = new(listenAddress, settings.ListenPort) };
+        if (settings.EnableIPv6 && listenAddress.Equals(IPAddress.Any) && (osSupportsIPv6 ?? System.Net.Sockets.Socket.OSSupportsIPv6))
+        {
+            endpoints["ipv6"] = new(IPAddress.IPv6Any, settings.ListenPort);
+        }
+
+        return endpoints;
     }
 
     private static TorrentSettings CreateTorrentSettings(AppSettings settings) => new TorrentSettingsBuilder

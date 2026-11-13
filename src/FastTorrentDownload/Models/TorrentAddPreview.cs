@@ -5,4 +5,5 @@ public sealed record TorrentFilePreview(string Path, long Length, bool Selected 
 public sealed record TorrentAddPreview(
     string Id,
     string Name,
-    IReadOnlyList<TorrentFilePreview> Files);
+    IReadOnlyList<TorrentFilePreview> Files,
+    bool Sequential = false);

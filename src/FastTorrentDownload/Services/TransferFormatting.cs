@@ -19,12 +19,12 @@ public static class TransferFormatting
 
     public static string Remaining(long verified, long total, long rate, string state)
     {
-        if (total > 0 && verified >= total) return "Complete";
-        if (total <= 0 || rate <= 0 || state != "Downloading") return "ETA unknown";
+        if (total > 0 && verified >= total) return Loc.T("Complete");
+        if (total <= 0 || rate <= 0 || state != "Downloading") return Loc.T("ETA unknown");
         var seconds = Math.Ceiling((double)(total - verified) / rate);
-        if (seconds >= TimeSpan.MaxValue.TotalSeconds) return "ETA unknown";
+        if (seconds >= TimeSpan.MaxValue.TotalSeconds) return Loc.T("ETA unknown");
         var eta = TimeSpan.FromSeconds(seconds);
-        return eta.TotalDays >= 1 ? $"ETA {(int)eta.TotalDays}d {eta.Hours}h" :
-            eta.TotalHours >= 1 ? $"ETA {eta.Hours}h {eta.Minutes}m" : $"ETA {eta.Minutes}m {eta.Seconds}s";
+        return eta.TotalDays >= 1 ? Loc.I($"ETA {(int)eta.TotalDays}d {eta.Hours}h") :
+            eta.TotalHours >= 1 ? Loc.I($"ETA {eta.Hours}h {eta.Minutes}m") : Loc.I($"ETA {eta.Minutes}m {eta.Seconds}s");
     }
 }

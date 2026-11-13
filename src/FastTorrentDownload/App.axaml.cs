@@ -32,6 +32,9 @@ public partial class App : Application
             var paths = _paths;
             AppLogger.Init(paths);
             var settings = new SettingsStore(paths);
+            // The language must be known before the first window builds its texts.
+            // Read on the thread pool: blocking on LoadAsync here would deadlock on the UI synchronization context.
+            Loc.Use(Loc.Resolve(Task.Run(settings.LoadAsync).GetAwaiter().GetResult().Language));
             var engine = new TorrentEngineService(paths);
             var viewModel = new MainViewModel(engine, settings, new ReleaseUpdateService());
             var args = desktop.Args ?? [];
@@ -65,9 +68,9 @@ public partial class App : Application
 
             trayIcon.Command = new RelayCommand(() => ShowMainWindow(mainWindow));
             var menu = new NativeMenu();
-            menu.Add(new NativeMenuItem("Open") { Command = trayIcon.Command });
+            menu.Add(new NativeMenuItem(Loc.T("Open")) { Command = trayIcon.Command });
             menu.Add(new NativeMenuItemSeparator());
-            menu.Add(new NativeMenuItem("Exit") { Command = new RelayCommand(mainWindow.RequestExit) });
+            menu.Add(new NativeMenuItem(Loc.T("Exit")) { Command = new RelayCommand(mainWindow.RequestExit) });
             trayIcon.Menu = menu;
             var icons = new TrayIcons();
             icons.Add(trayIcon);

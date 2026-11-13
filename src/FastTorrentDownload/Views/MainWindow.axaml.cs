@@ -1,3 +1,4 @@
+using FastTorrentDownload.Services;
 using System.Globalization;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -29,6 +30,7 @@ public partial class MainWindow : Window
         _startHidden = startHidden;
         DataContext = viewModel;
         InitializeComponent();
+        Loc.Apply(this);
         Opened += OnOpened;
         Closing += OnClosing;
         _refreshTimer.Tick += OnRefreshTick;
@@ -51,7 +53,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            _viewModel.NotifyActionFailure($"Could not start the torrent engine: {exception.Message}");
+            _viewModel.NotifyActionFailure(Loc.I($"Could not start the torrent engine: {exception.Message}"));
         }
     }
 
@@ -72,7 +74,7 @@ public partial class MainWindow : Window
     {
         if (_externalSources.Count >= MaxQueuedExternalSources)
         {
-            _viewModel.StatusMessage = "Too many pending torrents; the latest one was ignored.";
+            _viewModel.StatusMessage = Loc.T("Too many pending torrents; the latest one was ignored.");
             return;
         }
 
@@ -141,7 +143,7 @@ public partial class MainWindow : Window
 
             if (Services.PathGuard.IsRemoteOrDevicePath(text))
             {
-                _viewModel.StatusMessage = "Network paths are not opened from pasted text. Use “+ Add torrent” and browse to the file.";
+                _viewModel.StatusMessage = Loc.T("Network paths are not opened from pasted text. Use “+ Add torrent” and browse to the file.");
                 return;
             }
 
@@ -152,7 +154,7 @@ public partial class MainWindow : Window
         {
             // An async void handler must never let a clipboard failure take the app down.
             Services.AppLogger.LogException("Clipboard paste failed", exception);
-            _viewModel.NotifyActionFailure($"Could not read the clipboard: {exception.Message}");
+            _viewModel.NotifyActionFailure(Loc.I($"Could not read the clipboard: {exception.Message}"));
         }
     }
 
@@ -171,14 +173,14 @@ public partial class MainWindow : Window
             var trimmed = source.Trim();
             if (!IsTorrentSource(trimmed))
             {
-                _viewModel.StatusMessage = "Drop a .torrent file here, or add a magnet link.";
+                _viewModel.StatusMessage = Loc.T("Drop a .torrent file here, or add a magnet link.");
                 return;
             }
 
             // A dragged file is the user's pick; dragged text naming a share is not.
             if (string.IsNullOrWhiteSpace(path) && Services.PathGuard.IsRemoteOrDevicePath(trimmed))
             {
-                _viewModel.StatusMessage = "Network paths are not opened from dropped text. Use “+ Add torrent” and browse to the file.";
+                _viewModel.StatusMessage = Loc.T("Network paths are not opened from dropped text. Use “+ Add torrent” and browse to the file.");
                 return;
             }
 
@@ -188,7 +190,7 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             Services.AppLogger.LogException("Drop failed", exception);
-            _viewModel.NotifyActionFailure($"Could not read the dropped item: {exception.Message}");
+            _viewModel.NotifyActionFailure(Loc.I($"Could not read the dropped item: {exception.Message}"));
         }
     }
 
@@ -206,7 +208,7 @@ public partial class MainWindow : Window
             request.Destination,
             fetch.Token,
             (status, detail) => Dispatcher.UIThread.Post(() => picker.UpdateLoadingStatus(status, detail)));
-        var dialogTask = picker.ShowDialog<string[]?>(this);
+        var dialogTask = picker.ShowDialog<FileSelection?>(this);
 
         TorrentAddPreview? preview = null;
         string? loadError = null;
@@ -218,11 +220,11 @@ public partial class MainWindow : Window
         {
             if (fetch.IsCancellationRequested || exception is OperationCanceledException)
             {
-                _viewModel.StatusMessage = "Add cancelled.";
+                _viewModel.StatusMessage = Loc.T("Add cancelled.");
                 return;
             }
 
-            loadError = exception.Message;
+            loadError = Loc.Known(exception.Message);
             picker.FailAndClose();
         }
 
@@ -241,11 +243,11 @@ public partial class MainWindow : Window
 
             if (loadError is null)
             {
-                _viewModel.StatusMessage = "Add cancelled.";
+                _viewModel.StatusMessage = Loc.T("Add cancelled.");
             }
             else
             {
-                _viewModel.NotifyActionFailure($"Could not add torrent: {loadError}");
+                _viewModel.NotifyActionFailure(Loc.I($"Could not add torrent: {loadError}"));
             }
 
             return;
@@ -253,12 +255,12 @@ public partial class MainWindow : Window
 
         try
         {
-            await _viewModel.AddAsync(preview, selectedFiles, request.StartImmediately);
+            await _viewModel.AddAsync(preview, selectedFiles.Files, request.StartImmediately, selectedFiles.Sequential);
         }
         catch (Exception exception)
         {
             await _viewModel.CancelAddAsync(preview.Id);
-            _viewModel.NotifyActionFailure($"Could not add torrent: {exception.Message}");
+            _viewModel.NotifyActionFailure(Loc.I($"Could not add torrent: {exception.Message}"));
         }
     }
 
@@ -276,11 +278,11 @@ public partial class MainWindow : Window
                 }
             }
 
-            return "Magnet link";
+            return Loc.T("Magnet link");
         }
 
         var fileName = Path.GetFileName(trimmed);
-        return string.IsNullOrWhiteSpace(fileName) ? "Torrent file" : fileName;
+        return string.IsNullOrWhiteSpace(fileName) ? Loc.T("Torrent file") : fileName;
     }
 
     private static TorrentRowViewModel? RowOf(object? sender) => (sender as Control)?.DataContext as TorrentRowViewModel;
@@ -327,6 +329,15 @@ public partial class MainWindow : Window
         });
     }
 
+    // Row templates are instantiated after the window is built, so their literal labels are translated here.
+    private void Row_Loaded(object? sender, RoutedEventArgs eventArgs)
+    {
+        if (sender is Control row)
+        {
+            Loc.Apply(row);
+        }
+    }
+
     private void RowDetails_Click(object? sender, RoutedEventArgs eventArgs)
     {
         if (RowOf(sender) is { } row)
@@ -347,12 +358,12 @@ public partial class MainWindow : Window
         {
             var files = await _viewModel.GetFilesAsync(row.Id);
             var picker = new SelectTorrentFilesWindow(files.Name, editing: true) { Icon = Icon };
-            var dialogTask = picker.ShowDialog<string[]?>(this);
+            var dialogTask = picker.ShowDialog<FileSelection?>(this);
             picker.ShowPreview(files);
             var selected = await dialogTask;
             if (selected is not null)
             {
-                await _viewModel.ChangeFilesAsync(row.Id, selected);
+                await _viewModel.ChangeFilesAsync(row.Id, selected.Files, selected.Sequential);
             }
         });
     }
@@ -369,7 +380,7 @@ public partial class MainWindow : Window
         {
             var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
             {
-                Title = $"Move “{row.Name}” to…",
+                Title = Loc.I($"Move “{row.Name}” to…"),
                 AllowMultiple = false
             });
             if (folders.Count == 0)
@@ -468,6 +479,8 @@ public partial class MainWindow : Window
         PexCheckBox.IsChecked = copy.EnablePeerExchange;
         LsdCheckBox.IsChecked = copy.EnableLocalPeerDiscovery;
         PortForwardingCheckBox.IsChecked = copy.EnablePortForwarding;
+        IPv6CheckBox.IsChecked = copy.EnableIPv6;
+        SequentialDefaultCheckBox.IsChecked = copy.SequentialByDefault;
         EncryptionCheckBox.IsChecked = copy.RequireEncryptedPeerConnections;
         PublicCachesCheckBox.IsChecked = copy.UsePublicMetadataCaches;
         DownloadLimitTextBox.Text = copy.MaximumDownloadKiBPerSecond.ToString(CultureInfo.InvariantCulture);
@@ -475,6 +488,7 @@ public partial class MainWindow : Window
         CloseToTrayCheckBox.IsChecked = copy.CloseToTray;
         StartWithWindowsCheckBox.IsChecked = copy.StartWithWindows;
         ThemeComboBox.SelectedIndex = copy.Theme switch { "Light" => 1, "Dark" => 2, _ => 0 };
+        LanguageComboBox.SelectedIndex = copy.Language switch { "English" => 1, "Español" => 2, _ => 0 };
         ValidationErrorTextBlock.Text = string.Empty;
         ValidationErrorTextBlock.IsVisible = false;
         SettingsScrollViewer.Offset = default;
@@ -484,7 +498,7 @@ public partial class MainWindow : Window
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = "Choose default download folder",
+            Title = Loc.T("Choose default download folder"),
             AllowMultiple = false
         });
 
@@ -506,7 +520,7 @@ public partial class MainWindow : Window
         if (!int.TryParse(ListenPortTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var listenPort) ||
             listenPort is < 1024 or > 65535)
         {
-            ShowSettingsValidationError("Port must be between 1024 and 65535.");
+            ShowSettingsValidationError(Loc.T("Port must be between 1024 and 65535."));
             return;
         }
 
@@ -516,20 +530,20 @@ public partial class MainWindow : Window
         }
         catch (ArgumentException exception)
         {
-            ShowSettingsValidationError(exception.Message);
+            ShowSettingsValidationError(Loc.Known(exception.Message));
             return;
         }
 
         if (!int.TryParse(DownloadLimitTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var downloadLimit) || downloadLimit < 0 ||
             !int.TryParse(UploadLimitTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var uploadLimit) || uploadLimit < 0)
         {
-            ShowSettingsValidationError("Use non-negative numeric limits.");
+            ShowSettingsValidationError(Loc.T("Use non-negative numeric limits."));
             return;
         }
 
         if (!int.TryParse(MaxActiveTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var maxActive) || maxActive < 0)
         {
-            ShowSettingsValidationError("Maximum active downloads must be 0 or a positive number.");
+            ShowSettingsValidationError(Loc.T("Maximum active downloads must be 0 or a positive number."));
             return;
         }
 
@@ -542,6 +556,8 @@ public partial class MainWindow : Window
         updated.EnablePeerExchange = PexCheckBox.IsChecked == true;
         updated.EnableLocalPeerDiscovery = LsdCheckBox.IsChecked == true;
         updated.EnablePortForwarding = PortForwardingCheckBox.IsChecked == true;
+        updated.EnableIPv6 = IPv6CheckBox.IsChecked == true;
+        updated.SequentialByDefault = SequentialDefaultCheckBox.IsChecked == true;
         updated.RequireEncryptedPeerConnections = EncryptionCheckBox.IsChecked == true;
         updated.UsePublicMetadataCaches = PublicCachesCheckBox.IsChecked == true;
         updated.MaximumDownloadKiBPerSecond = downloadLimit;
@@ -549,6 +565,7 @@ public partial class MainWindow : Window
         updated.CloseToTray = CloseToTrayCheckBox.IsChecked == true;
         updated.StartWithWindows = StartWithWindowsCheckBox.IsChecked == true;
         updated.Theme = ThemeComboBox.SelectedIndex switch { 1 => "Light", 2 => "Dark", _ => "System" };
+        updated.Language = LanguageComboBox.SelectedIndex switch { 1 => "English", 2 => "Español", _ => "System" };
         updated.Normalize();
 
         try
@@ -560,8 +577,8 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            ShowSettingsValidationError($"Could not save settings: {exception.Message}");
-            _viewModel.NotifyActionFailure($"Could not save settings: {exception.Message}");
+            ShowSettingsValidationError(Loc.I($"Could not save settings: {exception.Message}"));
+            _viewModel.NotifyActionFailure(Loc.I($"Could not save settings: {exception.Message}"));
         }
     }
 
@@ -580,7 +597,7 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             Services.AppLogger.LogException("Torrent action failed", exception);
-            _viewModel.NotifyActionFailure(exception.Message);
+            _viewModel.NotifyActionFailure(Loc.Known(exception.Message));
         }
     }
 
@@ -588,7 +605,7 @@ public partial class MainWindow : Window
     {
         _exitRequested = true;
         _skipExitConfirmation = true;
-        _viewModel.StatusMessage = "Installing update — the app will restart.";
+        _viewModel.StatusMessage = Loc.T("Installing update — the app will restart.");
         Show();
         Activate();
         Close();
@@ -613,7 +630,7 @@ public partial class MainWindow : Window
         {
             eventArgs.Cancel = true;
             Hide();
-            _viewModel.StatusMessage = "Running in the background — right-click the tray icon to exit.";
+            _viewModel.StatusMessage = Loc.T("Running in the background — right-click the tray icon to exit.");
             return;
         }
 

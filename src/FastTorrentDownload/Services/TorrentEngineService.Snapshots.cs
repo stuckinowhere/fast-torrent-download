@@ -96,7 +96,7 @@ public sealed partial class TorrentEngineService
                 : stalledFor is not null ? "Stalled" : manager.State.ToString();
             snapshots.Add(new TorrentSnapshot(
                 pair.Key,
-                string.IsNullOrWhiteSpace(manager.Name) ? "Fetching metadata…" : manager.Name,
+                string.IsNullOrWhiteSpace(manager.Name) ? Loc.T("Fetching metadata…") : manager.Name,
                 pair.Value.Destination,
                 state,
                 selectedBytes > 0 ? 100.0 * verifiedBytes / selectedBytes : manager.PartialProgress,
@@ -109,7 +109,8 @@ public sealed partial class TorrentEngineService
                 _operations.GetValueOrDefault(pair.Key),
                 selectedBytes,
                 verifiedBytes,
-                diagnostics));
+                diagnostics,
+                _sequentialHashes.Contains(DescribeInfoHashes(manager.InfoHashes))));
         }
 
         // "Stalled" is deliberately absent: a dead swarm must not keep the computer awake.
@@ -292,7 +293,7 @@ public sealed partial class TorrentEngineService
             ?? (manager.Error is { } engineError ? $"{engineError.Reason}: {engineError.Exception?.Message}" : null);
         var engine = RequireEngine();
         return new TorrentDiagnostics(known, connected, receiving, seeders, coverage,
-            _settings.EnableDht && manager.CanUseDht ? engine.Dht.State.ToString() : "Disabled for this torrent", engine.Dht.NodeCount,
+            _settings.EnableDht && manager.CanUseDht ? engine.Dht.State.ToString() : Loc.T("Disabled for this torrent"), engine.Dht.NodeCount,
             EffectiveLimit(engine.Settings.MaximumDownloadRate, manager.Settings.MaximumDownloadRate),
             EffectiveLimit(engine.Settings.MaximumUploadRate, manager.Settings.MaximumUploadRate), trackers, peerError, error, incoming, _settings.ListenPort);
     }

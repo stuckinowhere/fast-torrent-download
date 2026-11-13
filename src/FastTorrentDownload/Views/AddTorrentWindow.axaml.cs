@@ -1,3 +1,4 @@
+using FastTorrentDownload.Services;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
@@ -13,6 +14,7 @@ public partial class AddTorrentWindow : Window
     public AddTorrentWindow(string defaultDestination)
     {
         InitializeComponent();
+        Loc.Apply(this);
         DestinationTextBox.Text = defaultDestination;
     }
 
@@ -34,9 +36,9 @@ public partial class AddTorrentWindow : Window
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "Choose a torrent file",
+            Title = Loc.T("Choose a torrent file"),
             AllowMultiple = false,
-            FileTypeFilter = [new FilePickerFileType("Torrent files") { Patterns = ["*.torrent"] }]
+            FileTypeFilter = [new FilePickerFileType(Loc.T("Torrent files")) { Patterns = ["*.torrent"] }]
         });
 
         if (files.Count > 0)
@@ -49,7 +51,7 @@ public partial class AddTorrentWindow : Window
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = "Choose download folder",
+            Title = Loc.T("Choose download folder"),
             AllowMultiple = false
         });
 

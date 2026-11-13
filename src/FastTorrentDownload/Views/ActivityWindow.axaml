@@ -11,7 +11,7 @@
     <ListBox Grid.Row="1" ItemsSource="{Binding Activity}">
       <ListBox.ItemTemplate>
         <DataTemplate x:DataType="models:ActivityEntry">
-          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,6">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,6" Loaded="Row_Loaded">
             <TextBlock Text="{Binding Label}" TextWrapping="Wrap" VerticalAlignment="Center" />
             <Button Grid.Column="1" Content="Open folder" IsVisible="{Binding CanOpenFolder}" Tag="{Binding Destination}" Click="OpenFolder_Click" />
           </Grid>
