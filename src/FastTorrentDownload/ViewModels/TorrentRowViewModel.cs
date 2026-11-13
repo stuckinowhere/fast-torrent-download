@@ -59,6 +59,7 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     private long _selectedBytes = snapshot.SelectedBytes;
     private long _verifiedBytes = snapshot.VerifiedBytes;
     private TorrentDiagnostics? _diagnostics = snapshot.Diagnostics;
+    private bool _sequential = snapshot.Sequential;
 
     public string ProgressLabel => $"{Progress:0.0}%";
     public string VerifiedSizeLabel => TransferFormatting.Bytes(_verifiedBytes);
@@ -76,7 +77,7 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
     private string PeerSummary => _diagnostics?.PeerError is not null
         ? "peer statistics unavailable"
         : $"{_seederCount} connected seeders · {_leecherCount} other peers";
-    public string DetailLabel => $"{TransferFormatting.Bytes(_verifiedBytes)} / {TransferFormatting.Bytes(_selectedBytes)} verified · {ProgressOutlook}{(ShowsPeers ? " · " + PeerSummary : string.Empty)}";
+    public string DetailLabel => $"{TransferFormatting.Bytes(_verifiedBytes)} / {TransferFormatting.Bytes(_selectedBytes)} verified · {ProgressOutlook}{(_sequential ? " · in order" : string.Empty)}{(ShowsPeers ? " · " + PeerSummary : string.Empty)}";
     public string SessionLabel => $"Session received {TransferFormatting.Bytes(_downloadedBytes)} · sent {TransferFormatting.Bytes(_uploadedBytes)}";
     public string DiagnosticsText => $"Torrent state: {StateLabel}\n{_diagnostics?.Describe(_downloadRate) ?? "Diagnostics not available yet."}";
 
@@ -96,6 +97,7 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
         _selectedBytes = snapshot.SelectedBytes;
         _verifiedBytes = snapshot.VerifiedBytes;
         _diagnostics = snapshot.Diagnostics;
+        _sequential = snapshot.Sequential;
         OnPropertyChanged(nameof(TransferLabel));
         OnPropertyChanged(nameof(DetailLabel));
         OnPropertyChanged(nameof(SessionLabel));

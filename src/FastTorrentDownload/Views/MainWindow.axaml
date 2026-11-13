@@ -128,6 +128,8 @@
               <TextBox x:Name="MaxActiveTextBox" Grid.Column="1" Width="150" HorizontalAlignment="Left" />
             </Grid>
             <TextBlock Text="Torrents beyond the limit wait as “Queued” and start automatically when a slot frees up." Opacity="0.68" TextWrapping="Wrap" />
+            <CheckBox x:Name="SequentialDefaultCheckBox" Content="Download new torrents in order by default" Margin="0,8,0,0" />
+            <TextBlock Text="Each torrent can be changed from its Files… dialog. In-order downloads let you open media early; the default, rarest-first, is healthier for the swarm." Opacity="0.68" TextWrapping="Wrap" />
           </StackPanel>
 
           <StackPanel Spacing="7">
@@ -145,6 +147,8 @@
                 <CheckBox x:Name="PexCheckBox" Content="Peer exchange" Margin="0,0,18,8" />
                 <CheckBox x:Name="LsdCheckBox" Content="Local peer discovery" Margin="0,0,18,8" />
                 <CheckBox x:Name="PortForwardingCheckBox" Content="UPnP / NAT-PMP port forwarding" Margin="0,0,18,8" />
+                <CheckBox x:Name="IPv6CheckBox" Content="IPv6 peers" Margin="0,0,18,8"
+                          ToolTip.Tip="Also accept and connect to peers over IPv6. Applies when the listener address is 0.0.0.0." />
                 <CheckBox x:Name="EncryptionCheckBox" Content="Require encrypted peer connections" Margin="0,0,18,8" />
               </WrapPanel>
             </Grid>

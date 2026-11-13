@@ -316,6 +316,21 @@ Check("deleting downloaded files stays inside the save folder and removes the fo
     }
 });
 
+Check("the listener adds IPv6 only when enabled, supported and not pinned to one IPv4 address", () =>
+{
+    var both = TorrentEngineService.CreateListenEndPoints(new AppSettings { ListenPort = 51413 }, osSupportsIPv6: true);
+    Require(both["ipv4"].Equals(new IPEndPoint(IPAddress.Any, 51413)) && both["ipv6"].Equals(new IPEndPoint(IPAddress.IPv6Any, 51413)));
+    Require(!TorrentEngineService.CreateListenEndPoints(new AppSettings { EnableIPv6 = false }, osSupportsIPv6: true).ContainsKey("ipv6"));
+    Require(!TorrentEngineService.CreateListenEndPoints(new AppSettings(), osSupportsIPv6: false).ContainsKey("ipv6"));
+    var pinned = TorrentEngineService.CreateListenEndPoints(new AppSettings { ListenAddress = "192.168.1.25" }, osSupportsIPv6: true);
+    Require(pinned.Count == 1 && pinned["ipv4"].Address.Equals(IPAddress.Parse("192.168.1.25")));
+    var defaults = new AppSettings();
+    Require(defaults.EnableIPv6 && !defaults.SequentialByDefault);
+    var ordered = new TorrentRowViewModel(Snapshot(10, 0, 0, state: "Downloading") with { Sequential = true });
+    Require(ordered.DetailLabel.Contains("· in order ·"));
+    Require(!new TorrentRowViewModel(Snapshot(10, 0, 0, state: "Downloading")).DetailLabel.Contains("in order"));
+});
+
 Check("second-instance sources are filtered to magnets and torrent files", () =>
 {
     var sources = SingleInstanceChannel.ExtractSources(["--minimized", " magnet:?xt=urn:btih:abc ", @"C:\x\file.torrent", "notes.txt", ""]);
@@ -399,7 +414,8 @@ await CheckCompletedRemovalAsync(selectedOnly: true, manualRemoval: true);
 passed += 3;
 await LiveTransferCheck.RunAsync(complete: false);
 await LiveTransferCheck.RunAsync(complete: true);
-passed += 2;
+await SequentialIpv6Check.RunAsync();
+passed += 3;
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 

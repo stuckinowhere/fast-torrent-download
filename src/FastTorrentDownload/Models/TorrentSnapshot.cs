@@ -15,7 +15,8 @@ public sealed record TorrentSnapshot(
     string? Operation = null,
     long SelectedBytes = 0,
     long VerifiedBytes = 0,
-    TorrentDiagnostics? Diagnostics = null)
+    TorrentDiagnostics? Diagnostics = null,
+    bool Sequential = false)
 {
     public double Ratio => DownloadedBytes == 0 ? 0 : (double)UploadedBytes / DownloadedBytes;
 }

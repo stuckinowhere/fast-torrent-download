@@ -86,9 +86,9 @@ public sealed partial class MainViewModel(
         Action<string, string?>? onProgress = null) =>
         _engine.PrepareAddAsync(source, destination, cancellationToken, onProgress);
 
-    public async Task AddAsync(TorrentAddPreview preview, IReadOnlyCollection<string> selectedFiles, bool startImmediately)
+    public async Task AddAsync(TorrentAddPreview preview, IReadOnlyCollection<string> selectedFiles, bool startImmediately, bool sequential = false)
     {
-        await _engine.CommitAddAsync(preview, selectedFiles, startImmediately);
+        await _engine.CommitAddAsync(preview, selectedFiles, startImmediately, sequential);
         await SyncPauseIntentsAsync();
         await RefreshAsync();
         StatusMessage = startImmediately
@@ -164,8 +164,8 @@ public sealed partial class MainViewModel(
 
     public Task<TorrentAddPreview> GetFilesAsync(string id) => _engine.GetFilesAsync(id);
 
-    public Task ChangeFilesAsync(string id, IReadOnlyCollection<string> selectedFiles) =>
-        RunRowActionAsync(id, "Updating…", () => _engine.SetSelectedFilesAsync(id, selectedFiles),
+    public Task ChangeFilesAsync(string id, IReadOnlyCollection<string> selectedFiles, bool? sequential = null) =>
+        RunRowActionAsync(id, "Updating…", () => _engine.SetSelectedFilesAsync(id, selectedFiles, sequential),
             name => $"Updating files for {name}…", name => $"Updated the file selection for {name}.");
 
     public Task MoveTorrentAsync(string id, string destination) =>

@@ -229,13 +229,14 @@ internal static class UiSmoke
         picker = await PickerAsync();
         Require(picker.Title == "Change downloaded files" && picker.Files.Count == 2 && picker.Files.All(file => file.IsSelected), "Edit mode must preload the current selection.");
         picker.Files.Single(file => file.Path == "second.bin").IsSelected = false;
+        picker.FindControl<CheckBox>("SequentialCheckBox")!.IsChecked = true;
         picker.FindControl<Button>("AddSelectedButton")!.RaiseEvent(click);
         // The dialog closes before the row reports "Updating…", so poll the engine rather than the busy flag.
         var applied = false;
         await UntilAsync(() =>
         {
             var files = viewModel.GetFilesAsync(added.Id).GetAwaiter().GetResult();
-            applied = !files.Files.Single(file => file.Path == "second.bin").Selected && files.Files.Single(file => file.Path == "first.bin").Selected;
+            applied = !files.Files.Single(file => file.Path == "second.bin").Selected && files.Files.Single(file => file.Path == "first.bin").Selected && files.Sequential;
             return applied || viewModel.StatusMessage.StartsWith("Could not", StringComparison.Ordinal);
         }, "The file update did not finish.");
         Require(applied, $"The new file selection was not applied: {viewModel.StatusMessage}");
@@ -381,7 +382,7 @@ internal static class UiSmoke
             "Adding must preserve the source, destination and start choice.");
 
         var picker = new SelectTorrentFilesWindow(new string('t', 200));
-        var selectionTask = picker.ShowDialog<string[]?>(main);
+        var selectionTask = picker.ShowDialog<FileSelection?>(main);
         await Task.Delay(100);
         RequireInside(picker.FindControl<StackPanel>("LoadingPanel")!, picker, "File-list loading state");
         var files = Enumerable.Range(0, 100).Select(index => new TorrentFilePreview($"folder/{new string('f', 180)}-{index}.bin", 1_234_567_890)).ToArray();
@@ -422,8 +423,13 @@ internal static class UiSmoke
                 "Long file names must leave their size and checkbox visible.");
         }
         foreach (var file in picker.Files.Skip(1)) file.IsSelected = false;
+        var sequentialBox = picker.FindControl<CheckBox>("SequentialCheckBox")!;
+        Require(sequentialBox.IsEnabled && sequentialBox.IsChecked == false, "In-order downloading must be offered and off by default.");
+        RequireInside(sequentialBox, picker, "In-order option");
+        sequentialBox.IsChecked = true;
         picker.FindControl<Button>("AddSelectedButton")!.RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-        Require((await selectionTask)!.SequenceEqual(new[] { files[0].Path }), "Only the selected file must be returned.");
+        var selection = (await selectionTask)!;
+        Require(selection.Files.SequenceEqual(new[] { files[0].Path }) && selection.Sequential, "Only the selected file and the in-order choice must be returned.");
         Console.WriteLine("PASS Add dialog at widths 650/520, file selection at 560x420, loading/validation, long names and 100-file scrolling");
     }
 

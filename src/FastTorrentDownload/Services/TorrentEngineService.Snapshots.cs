@@ -109,7 +109,8 @@ public sealed partial class TorrentEngineService
                 _operations.GetValueOrDefault(pair.Key),
                 selectedBytes,
                 verifiedBytes,
-                diagnostics));
+                diagnostics,
+                _sequentialHashes.Contains(DescribeInfoHashes(manager.InfoHashes))));
         }
 
         // "Stalled" is deliberately absent: a dead swarm must not keep the computer awake.

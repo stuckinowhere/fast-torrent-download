@@ -38,8 +38,12 @@
       </ListBox.ItemTemplate>
     </ListBox>
 
-    <TextBlock Grid.Row="3" x:Name="StatusTextBlock" Foreground="{DynamicResource ErrorForegroundBrush}"
-               TextWrapping="Wrap" IsVisible="False" />
+    <StackPanel Grid.Row="3" Spacing="8">
+      <CheckBox x:Name="SequentialCheckBox" Content="Download in order (first file first, start to end)" IsEnabled="False"
+                ToolTip.Tip="Lets you open a video or the first files before the rest has arrived. Rarest-first, the default, is usually better for the swarm." />
+      <TextBlock x:Name="StatusTextBlock" Foreground="{DynamicResource ErrorForegroundBrush}"
+                 TextWrapping="Wrap" IsVisible="False" />
+    </StackPanel>
 
     <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="12">
       <Button x:Name="SelectAllButton" Classes="dialog-footer" Content="Select all" Click="SelectAll_Click" MinWidth="110" IsEnabled="False" />

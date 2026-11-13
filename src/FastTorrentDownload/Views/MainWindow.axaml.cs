@@ -206,7 +206,7 @@ public partial class MainWindow : Window
             request.Destination,
             fetch.Token,
             (status, detail) => Dispatcher.UIThread.Post(() => picker.UpdateLoadingStatus(status, detail)));
-        var dialogTask = picker.ShowDialog<string[]?>(this);
+        var dialogTask = picker.ShowDialog<FileSelection?>(this);
 
         TorrentAddPreview? preview = null;
         string? loadError = null;
@@ -253,7 +253,7 @@ public partial class MainWindow : Window
 
         try
         {
-            await _viewModel.AddAsync(preview, selectedFiles, request.StartImmediately);
+            await _viewModel.AddAsync(preview, selectedFiles.Files, request.StartImmediately, selectedFiles.Sequential);
         }
         catch (Exception exception)
         {
@@ -347,12 +347,12 @@ public partial class MainWindow : Window
         {
             var files = await _viewModel.GetFilesAsync(row.Id);
             var picker = new SelectTorrentFilesWindow(files.Name, editing: true) { Icon = Icon };
-            var dialogTask = picker.ShowDialog<string[]?>(this);
+            var dialogTask = picker.ShowDialog<FileSelection?>(this);
             picker.ShowPreview(files);
             var selected = await dialogTask;
             if (selected is not null)
             {
-                await _viewModel.ChangeFilesAsync(row.Id, selected);
+                await _viewModel.ChangeFilesAsync(row.Id, selected.Files, selected.Sequential);
             }
         });
     }
@@ -468,6 +468,8 @@ public partial class MainWindow : Window
         PexCheckBox.IsChecked = copy.EnablePeerExchange;
         LsdCheckBox.IsChecked = copy.EnableLocalPeerDiscovery;
         PortForwardingCheckBox.IsChecked = copy.EnablePortForwarding;
+        IPv6CheckBox.IsChecked = copy.EnableIPv6;
+        SequentialDefaultCheckBox.IsChecked = copy.SequentialByDefault;
         EncryptionCheckBox.IsChecked = copy.RequireEncryptedPeerConnections;
         PublicCachesCheckBox.IsChecked = copy.UsePublicMetadataCaches;
         DownloadLimitTextBox.Text = copy.MaximumDownloadKiBPerSecond.ToString(CultureInfo.InvariantCulture);
@@ -542,6 +544,8 @@ public partial class MainWindow : Window
         updated.EnablePeerExchange = PexCheckBox.IsChecked == true;
         updated.EnableLocalPeerDiscovery = LsdCheckBox.IsChecked == true;
         updated.EnablePortForwarding = PortForwardingCheckBox.IsChecked == true;
+        updated.EnableIPv6 = IPv6CheckBox.IsChecked == true;
+        updated.SequentialByDefault = SequentialDefaultCheckBox.IsChecked == true;
         updated.RequireEncryptedPeerConnections = EncryptionCheckBox.IsChecked == true;
         updated.UsePublicMetadataCaches = PublicCachesCheckBox.IsChecked == true;
         updated.MaximumDownloadKiBPerSecond = downloadLimit;
