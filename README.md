@@ -54,7 +54,7 @@ On an interactive Windows desktop, exercise the native views with an isolated fi
 dotnet run --project tests/FastTorrentDownload.Tests --configuration Release -- --ui-smoke-auto
 ```
 
-Use `--ui-smoke` instead for manual inspection, or `--ui-shots <folder>` to render the fixture queue and Settings page to PNG files in both themes for design review. Old settings containing a seeding ratio remain readable; the obsolete ratio is ignored because completed downloads are removed automatically.
+`--stress-ipv6 <rounds>` repeats the two live IPv6 transfers to flush out timing-dependent failures. Use `--ui-smoke` instead for manual inspection, or `--ui-shots <folder>` to render the fixture queue and Settings page to PNG files in both themes for design review. Old settings containing a seeding ratio remain readable; the obsolete ratio is ignored because completed downloads are removed automatically.
 
 ## Translations
 
@@ -71,7 +71,7 @@ The focused checks scan the source and fail when a string shown through `Loc.T`,
 On Windows with Inno Setup installed, run:
 
 ```powershell
-.\\scripts\\Publish.ps1 -Version 0.7.0
+.\\scripts\\Publish.ps1 -Version 0.7.1
 ```
 
 It creates a self-contained Windows x64 portable ZIP, an SHA-256 checksum file, and a per-user installer under `artifacts\\`. The installer is intentionally unsigned: publish the checksum beside it and expect Microsoft SmartScreen to show a reputation warning for early releases. Release files carry a GitHub build-provenance attestation: `gh attestation verify <file> --repo stuckinowhere/fast-torrent-download` confirms a file was built by this repository's release workflow. Only the installer registers the `magnet:` protocol and `.torrent` association (both optional tasks, per-user, removed on uninstall); the portable ZIP does not touch the registry.

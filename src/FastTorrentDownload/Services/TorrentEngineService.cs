@@ -327,13 +327,15 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
         manager.ChangePickerAsync(new MonoTorrent.PiecePicking.StandardPieceRequester(
             sequential ? SequentialPicking : MonoTorrent.PiecePicking.PieceRequesterSettings.Default));
 
-    // Caller holds _gate.
-    private async Task SetSequentialAsync(TorrentManager manager, bool sequential)
+    // Caller holds _gate. Returns true when the torrent was stopped for the switch and the caller
+    // must start it again, after saving state: starting first lets MonoTorrent rewrite its
+    // fast-resume file while the state save is reading it.
+    private async Task<bool> SetSequentialAsync(TorrentManager manager, bool sequential)
     {
         var hash = DescribeInfoHashes(manager.InfoHashes);
         if (sequential == _sequentialHashes.Contains(hash))
         {
-            return;
+            return false;
         }
 
         // MonoTorrent only accepts a new piece requester while the torrent is stopped, so a running
@@ -347,10 +349,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
         await ApplyPickerAsync(manager, sequential);
         if (sequential) _sequentialHashes.Add(hash);
         else _sequentialHashes.Remove(hash);
-        if (restart && !_pausedHashes.Contains(hash))
-        {
-            await StartOrQueueAsync(manager);
-        }
+        return restart && !_pausedHashes.Contains(hash);
     }
 
     public async Task<TorrentAddPreview> GetFilesAsync(string id)
@@ -385,8 +384,12 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
             await _gate.WaitAsync();
             try
             {
-                if (sequential is { } ordered) await SetSequentialAsync(manager, ordered);
+                var resume = sequential is { } ordered && await SetSequentialAsync(manager, ordered);
                 await SaveStateAsync();
+                if (resume)
+                {
+                    await StartOrQueueAsync(manager);
+                }
             }
             finally { _gate.Release(); }
         });

@@ -88,6 +88,7 @@ internal static class UiSmoke
             await ShotAsync("settings-light");
             viewModel.SetTheme("Dark");
             await ShotAsync("settings-dark");
+            await CaptureDialogsAsync(main, viewModel, directory);
             Console.WriteLine($"Saved UI captures to {directory}");
             if (Loc.Language != Loc.English)
             {
@@ -100,6 +101,80 @@ internal static class UiSmoke
             Console.Error.WriteLine(exception);
             desktop.Shutdown(1);
         }
+    }
+
+    // Every dialog, opened over the main window with representative content, so wording and
+    // clipping can be reviewed in the fixture language.
+    private static async Task CaptureDialogsAsync(MainWindow main, MainViewModel viewModel, string directory)
+    {
+        async Task ShotAsync(Window dialog, string name, Func<Task>? prepare = null)
+        {
+            dialog.Show(main);
+            await Task.Delay(350);
+            if (prepare is not null)
+            {
+                await prepare();
+                await Task.Delay(250);
+            }
+
+            var size = new PixelSize((int)dialog.ClientSize.Width, (int)dialog.ClientSize.Height);
+            using var bitmap = new Avalonia.Media.Imaging.RenderTargetBitmap(size, new Vector(96, 96));
+            bitmap.Render(dialog);
+            bitmap.Save(Path.Combine(directory, name + ".png"), new Avalonia.Media.Imaging.PngBitmapEncoderOptions());
+            dialog.Close();
+            await Task.Delay(100);
+        }
+
+        var files = new[]
+        {
+            new TorrentFilePreview("Season 1/Episode 01.mkv", 1_610_612_736),
+            new TorrentFilePreview("Season 1/Episode 02.mkv", 1_503_238_553),
+            new TorrentFilePreview("Extras/Readme.txt", 2_048, Selected: false)
+        };
+        var preview = new TorrentAddPreview("capture", "Example show", files);
+        TorrentDiagnostics Trackers() => new(12, 3, 1, 0, 62.7, "Ready", 120, 0, 0,
+        [
+            new TrackerDiagnostic("udp://tracker.opentrackr.org:1337", "Working", null),
+            new TrackerDiagnostic("udp://open.stealth.si:80", "Offline", "Timed out"),
+            new TrackerDiagnostic("udp://tracker.torrent.eu.org:451", "NotContacted", null)
+        ]);
+
+        await ShotAsync(new AddTorrentWindow(@"D:\Torrents"), "dialog-add");
+        var loading = new SelectTorrentFilesWindow("Example show");
+        await ShotAsync(loading, "dialog-files-loading", () => { loading.UpdateLoadingStatus(Loc.I($"Fetching torrent file list… ({12}s / 60s)"), Loc.T("Payload files will only download after you confirm the selection.")); return Task.CompletedTask; });
+        var picker = new SelectTorrentFilesWindow("Example show");
+        await ShotAsync(picker, "dialog-files-add", () => { picker.ShowPreview(preview); return Task.CompletedTask; });
+        var editor = new SelectTorrentFilesWindow("Example show", editing: true);
+        await ShotAsync(editor, "dialog-files-edit", () => { editor.ShowPreview(preview with { Sequential = true }); return Task.CompletedTask; });
+        await ShotAsync(new TrackersWindow("Example show", Trackers().Trackers), "dialog-trackers");
+        await ShotAsync(new DeleteFilesWindow("Example show", @"D:\Torrents", TransferFormatting.Bytes(3_113_851_289)), "dialog-delete");
+        await ShotAsync(new ExitConfirmationWindow(), "dialog-exit");
+        await ShotAsync(new PortForwardingGuideWindow(new LocalNetworkGuideInfo("EXAMPLE-PC", "192.168.1.25", "192.168.1.1", "Ethernet", "00:11:22:33:44:55", 51413)), "dialog-port-guide");
+        await ShotAsync(new UpToDateWindow("v0.7.0"), "dialog-up-to-date");
+        await ShotAsync(new UpdateAvailableWindow(
+            new AvailableUpdate("v9.9.9", new Uri("https://github.com/o/r/releases/download/v9.9.9/x-portable.zip"), new Uri("https://github.com/o/r/releases/download/v9.9.9/x-portable.zip.sha256")),
+            new AppUpdateService()), "dialog-update");
+        viewModel.NotifyActionFailure(Loc.Known("This torrent is already in the queue."));
+        viewModel.StatusMessage = Loc.I($"Completed {preview.Name}; downloaded files were kept.");
+        await ShotAsync(new ActivityWindow(viewModel.Activity), "dialog-activity");
+
+        // A running, a stalled and a queued row, to see the state chips and reasons in this language.
+        var stalled = Trackers() with { SwarmSeeders = 0, SwarmLeechers = 17, StalledFor = TimeSpan.FromMinutes(6) };
+        viewModel.Torrents.Clear();
+        viewModel.Torrents.Add(new TorrentRowViewModel(new TorrentSnapshot("a", "Downloading example", @"D:\Torrents", "Downloading", 41.5, 2_621_440, 131_072, 0, 0, 4, 9,
+            null, 3_113_851_289, 1_292_248_285, Trackers() with { ConnectedPeers = 13, ReceivingPeers = 6, ConnectedSeeders = 4, IncomingPeers = 2 }, Sequential: true)));
+        viewModel.Torrents.Add(new TorrentRowViewModel(new TorrentSnapshot("b", "Stalled example", @"D:\Torrents", "Stalled", 62.7, 0, 0, 0, 0, 0, 2,
+            null, 19_853_979_673, 12_448_445_255, stalled)));
+        viewModel.Torrents.Add(new TorrentRowViewModel(new TorrentSnapshot("c", "Queued example", @"D:\Torrents", "Queued", 0, 0, 0, 0, 0, 0, 0,
+            null, 734_003_200, 0, Trackers())));
+        viewModel.Torrents[1].IsDetailsOpen = true;
+        if (viewModel.IsSettingsOpen) viewModel.IsSettingsOpen = false;
+        await Task.Delay(400);
+        var mainSize = new PixelSize((int)main.ClientSize.Width, (int)main.ClientSize.Height);
+        using var states = new Avalonia.Media.Imaging.RenderTargetBitmap(mainSize, new Vector(96, 96));
+        states.Render(main);
+        states.Save(Path.Combine(directory, "queue-states.png"), new Avalonia.Media.Imaging.PngBitmapEncoderOptions());
+        viewModel.Torrents.Clear();
     }
 
     private static async Task VerifyAsync()

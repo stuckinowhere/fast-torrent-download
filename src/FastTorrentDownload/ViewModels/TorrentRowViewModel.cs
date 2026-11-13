@@ -73,7 +73,8 @@ public sealed partial class TorrentRowViewModel(TorrentSnapshot snapshot) : Obse
         _ => _diagnostics?.StallSummary ?? TransferFormatting.Remaining(_verifiedBytes, _selectedBytes, _downloadRate, State)
     };
     // Peer counts and an ETA mean nothing for a torrent that is not running.
-    private bool ShowsPeers => State is not ("Stopped" or "Paused" or "Queued" or "Error");
+    // A stalled row already states the reason; repeating peer counts would push it off the line.
+    private bool ShowsPeers => State is not ("Stopped" or "Paused" or "Queued" or "Error" or "Stalled");
     private string PeerSummary => _diagnostics?.PeerError is not null
         ? Loc.T("peer statistics unavailable")
         : Loc.I($"{_seederCount} connected seeders · {_leecherCount} other peers");
