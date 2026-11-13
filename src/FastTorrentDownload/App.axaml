@@ -33,6 +33,11 @@
           <SolidColorBrush x:Key="MutedInkBrush" Color="#A8A8A4" />
           <SolidColorBrush x:Key="TrackBrush" Color="#3A3A38" />
           <SolidColorBrush x:Key="RowBorderBrush" Color="#4A4A48" />
+          <!-- With a white accent the stock white tick would vanish; draw it in the dark ink instead. -->
+          <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundChecked" Color="#101010" />
+          <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPointerOver" Color="#101010" />
+          <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPressed" Color="#101010" />
+          <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedDisabled" Color="#101010" />
           <SolidColorBrush x:Key="StateRunningBrush" Color="#7BD99B" />
           <SolidColorBrush x:Key="StateWarningBrush" Color="#F2B84B" />
         </ResourceDictionary>
@@ -40,7 +45,13 @@
     </ResourceDictionary>
   </Application.Resources>
   <Application.Styles>
-    <FluentTheme />
+    <!-- Ink replaces the system accent everywhere Fluent uses it: check boxes, focus, selection. -->
+    <FluentTheme>
+      <FluentTheme.Palettes>
+        <ColorPaletteResources x:Key="Light" Accent="#101010" />
+        <ColorPaletteResources x:Key="Dark" Accent="#FFFFFF" />
+      </FluentTheme.Palettes>
+    </FluentTheme>
     <Style Selector="Window">
       <Setter Property="FontFamily" Value="Segoe UI Variable" />
       <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}" />

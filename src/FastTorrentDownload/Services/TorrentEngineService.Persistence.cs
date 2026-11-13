@@ -23,9 +23,11 @@ public sealed partial class TorrentEngineService
                 buffer = await RequireEngine().SaveStateAsync();
                 break;
             }
-            catch (IOException exception) when ((exception.HResult & 0xffff) is 32 or 33 && attempt < 4)
+            catch (Exception exception) when (attempt < 6 &&
+                (exception is IOException && (exception.HResult & 0xffff) is 32 or 33 || exception is UnauthorizedAccessException))
             {
-                // MonoTorrent can still be writing fast-resume data after a state transition.
+                // MonoTorrent can still be writing or replacing fast-resume data after a state transition;
+                // Windows reports a file that is mid-replacement as a sharing violation or as access denied.
                 await Task.Delay(100);
             }
         }

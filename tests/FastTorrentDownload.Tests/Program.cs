@@ -17,6 +17,19 @@ if (Array.IndexOf(args, "--ui-shots") is var shotsIndex and >= 0)
     UiSmoke.ShotsDirectory = Path.GetFullPath(args.ElementAtOrDefault(shotsIndex + 1) ?? "ui-shots");
     return UiSmoke.Run();
 }
+if (Array.IndexOf(args, "--stress-ipv6") is var stressIndex and >= 0)
+{
+    // Repeats the two live IPv6 transfers to flush out timing-dependent failures.
+    var rounds = int.TryParse(args.ElementAtOrDefault(stressIndex + 1), out var parsed) ? parsed : 20;
+    for (var round = 1; round <= rounds; round++)
+    {
+        await SequentialIpv6Check.RunAsync();
+        await SequentialIpv6Check.RunInboundAsync();
+    }
+
+    Console.WriteLine($"PASS {rounds} IPv6 stress rounds");
+    return 0;
+}
 if (args.Contains("--ui-smoke") || args.Contains("--ui-smoke-auto")) return UiSmoke.Run(args.Contains("--ui-smoke-auto"));
 
 var passed = 0;
@@ -418,7 +431,8 @@ passed += 3;
 await LiveTransferCheck.RunAsync(complete: false);
 await LiveTransferCheck.RunAsync(complete: true);
 await SequentialIpv6Check.RunAsync();
-passed += 3;
+await SequentialIpv6Check.RunInboundAsync();
+passed += 4;
 Console.WriteLine($"PASS {passed} focused checks");
 return 0;
 
