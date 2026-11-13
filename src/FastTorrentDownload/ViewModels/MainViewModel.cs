@@ -44,13 +44,13 @@ public sealed partial class MainViewModel(
     }
     partial void OnStatusMessageChanged(string value)
     {
-        if (value == "Ready.") return;
+        if (value == Loc.T("Ready.")) return;
         Activity.Insert(0, new ActivityEntry(DateTimeOffset.Now, value));
         while (Activity.Count > 50) Activity.RemoveAt(Activity.Count - 1);
     }
 
     [ObservableProperty] private TorrentRowViewModel? _selectedTorrent;
-    [ObservableProperty] private string _statusMessage = "Starting torrent engine…";
+    [ObservableProperty] private string _statusMessage = Loc.T("Starting torrent engine…");
     [ObservableProperty] private string _totalDownloadRate = "↓ 0 B/s";
     [ObservableProperty] private string _totalUploadRate = "↑ 0 B/s";
     [ObservableProperty] private string _queueSummary = "0 torrents";
@@ -72,7 +72,7 @@ public sealed partial class MainViewModel(
 
         await _engine.InitializeAsync(_settings);
         await RefreshAsync();
-        StatusMessage = "Ready — add a magnet link or .torrent file.";
+        StatusMessage = Loc.T("Ready — add a magnet link or .torrent file.");
         foreach (var warning in _engine.RestoreWarnings)
         {
             NotifyActionFailure(warning);
@@ -92,8 +92,8 @@ public sealed partial class MainViewModel(
         await SyncPauseIntentsAsync();
         await RefreshAsync();
         StatusMessage = startImmediately
-            ? $"Added and started {preview.Name}."
-            : $"Added {preview.Name} in a paused state.";
+            ? Loc.I($"Added and started {preview.Name}.")
+            : Loc.I($"Added {preview.Name} in a paused state.");
         ShowNotification(StatusMessage, null);
     }
 
@@ -119,7 +119,7 @@ public sealed partial class MainViewModel(
     {
         if (SelectedTorrent is null)
         {
-            StatusMessage = "Select a torrent first.";
+            StatusMessage = Loc.T("Select a torrent first.");
             return;
         }
 
@@ -127,19 +127,19 @@ public sealed partial class MainViewModel(
     }
 
     public Task StartTorrentAsync(string id) => RunRowActionAsync(id, "Starting…", () => _engine.StartAsync(id),
-        name => $"Starting {name}…", name => $"Started {name}.");
+        name => Loc.I($"Starting {name}…"), name => Loc.I($"Started {name}."));
 
     public Task PauseTorrentAsync(string id) => RunRowActionAsync(id, "Stopping…", () => _engine.PauseAsync(id),
-        name => $"Stopping {name}…", name => $"Paused {name}.");
+        name => Loc.I($"Stopping {name}…"), name => Loc.I($"Paused {name}."));
 
     public Task RecheckTorrentAsync(string id) => RunRowActionAsync(id, "Rechecking…", () => _engine.RecheckAsync(id),
-        name => $"Rechecking {name}…", name => $"Recheck started for {name}.");
+        name => Loc.I($"Rechecking {name}…"), name => Loc.I($"Recheck started for {name}."));
 
     public Task RemoveTorrentAsync(string id) => RunRowActionAsync(id, "Stopping…", () => _engine.RemoveAsync(id),
-        name => $"Stopping {name} before removing…", name => $"Removed {name}; downloaded files were kept.");
+        name => Loc.I($"Stopping {name} before removing…"), name => Loc.I($"Removed {name}; downloaded files were kept."));
 
     public Task DeleteTorrentAsync(string id) => RunRowActionAsync(id, "Stopping…", () => _engine.RemoveAsync(id, deleteFiles: true),
-        name => $"Stopping {name} before deleting its files…", name => $"Removed {name} and deleted its downloaded files.");
+        name => Loc.I($"Stopping {name} before deleting its files…"), name => Loc.I($"Removed {name} and deleted its downloaded files."));
 
     public async Task AddTrackersAsync(string id, string text)
     {
@@ -147,18 +147,27 @@ public sealed partial class MainViewModel(
         var (accepted, rejected) = TorrentEngineService.ParseTrackerUrls(text);
         if (row is null || accepted.Count == 0)
         {
+            var sample = string.Join(", ", rejected.Take(3));
             NotifyActionFailure(rejected.Count == 0
-                ? "No tracker URLs were entered."
-                : $"No valid tracker URLs (udp, http or https). Ignored: {string.Join(", ", rejected.Take(3))}");
+                ? Loc.T("No tracker URLs were entered.")
+                : Loc.I($"No valid tracker URLs (udp, http or https). Ignored: {sample}"));
             return;
         }
 
         var added = await _engine.AddTrackersAsync(id, accepted);
         await RefreshAsync(waitForPending: true);
-        var ignored = rejected.Count == 0 ? string.Empty : $" Ignored {rejected.Count} invalid entr{(rejected.Count == 1 ? "y" : "ies")}.";
-        StatusMessage = added == 0
-            ? $"{row.Name} already had those trackers.{ignored}"
-            : $"Added {added} tracker{(added == 1 ? string.Empty : "s")} to {row.Name}.{ignored}";
+        var ignored = rejected.Count switch
+        {
+            0 => string.Empty,
+            1 => " " + Loc.T("Ignored 1 invalid entry."),
+            _ => " " + Loc.I($"Ignored {rejected.Count} invalid entries.")
+        };
+        StatusMessage = added switch
+        {
+            0 => Loc.I($"{row.Name} already had those trackers."),
+            1 => Loc.I($"Added 1 tracker to {row.Name}."),
+            _ => Loc.I($"Added {added} trackers to {row.Name}.")
+        } + ignored;
         ShowNotification(StatusMessage, null);
     }
 
@@ -166,18 +175,18 @@ public sealed partial class MainViewModel(
 
     public Task ChangeFilesAsync(string id, IReadOnlyCollection<string> selectedFiles, bool? sequential = null) =>
         RunRowActionAsync(id, "Updating…", () => _engine.SetSelectedFilesAsync(id, selectedFiles, sequential),
-            name => $"Updating files for {name}…", name => $"Updated the file selection for {name}.");
+            name => Loc.I($"Updating files for {name}…"), name => Loc.I($"Updated the file selection for {name}."));
 
     public Task MoveTorrentAsync(string id, string destination) =>
         RunRowActionAsync(id, "Moving…", () => _engine.MoveAsync(id, destination),
-            name => $"Moving {name}…", name => $"Moved {name} to its new folder.");
+            name => Loc.I($"Moving {name}…"), name => Loc.I($"Moved {name} to its new folder."));
 
     private async Task RunRowActionAsync(string id, string operation, Func<Task> action, Func<string, string> pending, Func<string, string> success)
     {
         var row = Torrents.FirstOrDefault(current => current.Id == id);
         if (row is null)
         {
-            StatusMessage = "That torrent is no longer in the queue.";
+            StatusMessage = Loc.T("That torrent is no longer in the queue.");
             return;
         }
 
@@ -212,12 +221,12 @@ public sealed partial class MainViewModel(
         var folder = ResolveFolderToOpen(row, _settings);
         if (folder is null)
         {
-            StatusMessage = "That download folder is not available.";
+            StatusMessage = Loc.T("That download folder is not available.");
             return;
         }
 
         OpenFolder(folder);
-        if (row is null) StatusMessage = "Opened the default download folder.";
+        if (row is null) StatusMessage = Loc.T("Opened the default download folder.");
     }
 
     public void OpenNotificationFolder()
@@ -229,7 +238,7 @@ public sealed partial class MainViewModel(
     {
         if (!Directory.Exists(folder))
         {
-            StatusMessage = "That download folder is not available.";
+            StatusMessage = Loc.T("That download folder is not available.");
             return;
         }
         try
@@ -238,7 +247,7 @@ public sealed partial class MainViewModel(
         }
         catch (Exception exception)
         {
-            StatusMessage = $"Could not open the folder: {exception.Message}";
+            StatusMessage = Loc.I($"Could not open the folder: {exception.Message}");
         }
     }
 
@@ -263,9 +272,12 @@ public sealed partial class MainViewModel(
         await _settingsStore.SaveAsync(updatedSettings);
         await _engine.ApplySettingsAsync(updatedSettings);
         var startupChanged = _settings.StartWithWindows != updatedSettings.StartWithWindows;
+        var languageChanged = _settings.Language != updatedSettings.Language;
         _settings = updatedSettings.Copy();
         ApplyTheme(_settings.Theme);
-        StatusMessage = "Settings saved.";
+        StatusMessage = languageChanged
+            ? Loc.T("Settings saved. The language changes the next time the app starts.")
+            : Loc.T("Settings saved.");
         if (startupChanged)
         {
             try
@@ -274,7 +286,7 @@ public sealed partial class MainViewModel(
             }
             catch (Exception exception)
             {
-                StatusMessage = $"Settings saved, but the startup entry could not be updated: {exception.Message}";
+                StatusMessage = Loc.I($"Settings saved, but the startup entry could not be updated: {exception.Message}");
             }
         }
 
@@ -295,11 +307,11 @@ public sealed partial class MainViewModel(
             var update = await _updateService.CheckAsync(currentVersion);
             if (update is not null)
             {
-                StatusMessage = $"Update {update.Tag} is available.";
+                StatusMessage = Loc.I($"Update {update.Tag} is available.");
             }
             else if (!quiet)
             {
-                StatusMessage = "You have the latest release.";
+                StatusMessage = Loc.T("You have the latest release.");
             }
 
             return update;
@@ -310,7 +322,7 @@ public sealed partial class MainViewModel(
         }
         catch (Exception)
         {
-            StatusMessage = "Could not check GitHub releases. Check your connection and try again.";
+            StatusMessage = Loc.T("Could not check GitHub releases. Check your connection and try again.");
             return null;
         }
     }
@@ -325,7 +337,7 @@ public sealed partial class MainViewModel(
         _settings.Theme = theme;
         ApplyTheme(theme);
         _ = _settingsStore.SaveAsync(_settings);
-        StatusMessage = $"{theme} theme enabled.";
+        StatusMessage = theme == "Light" ? Loc.T("Light theme enabled.") : Loc.T("Dark theme enabled.");
     }
 
     public async Task RefreshAsync(bool waitForPending = false)
@@ -376,9 +388,9 @@ public sealed partial class MainViewModel(
             var totalUpload = snapshots.Sum(snapshot => snapshot.UploadRate);
             TotalDownloadRate = $"↓ {TorrentRowViewModel.FormatRate(totalDownload)}";
             TotalUploadRate = $"↑ {TorrentRowViewModel.FormatRate(totalUpload)}";
-            QueueSummary = snapshots.Count == 1 ? "1 torrent" : $"{snapshots.Count} torrents";
+            QueueSummary = snapshots.Count == 1 ? Loc.T("1 torrent") : Loc.I($"{snapshots.Count} torrents");
             TrayToolTipText = snapshots.Count == 0
-                ? "fast torrent download · Idle"
+                ? "fast torrent download · " + Loc.T("Idle")
                 : $"fast torrent download · {QueueSummary} · {TotalDownloadRate} {TotalUploadRate}";
             OnPropertyChanged(nameof(HasTorrents));
             NotifySnapshotErrors(snapshots);
@@ -387,14 +399,14 @@ public sealed partial class MainViewModel(
             foreach (var completion in _engine.TakeCompletions())
             {
                 StatusMessage = completion.Error is null
-                    ? $"Completed {completion.Name}; downloaded files were kept."
-                    : $"Could not finish removing {completion.Name}: {completion.Error}";
+                    ? Loc.I($"Completed {completion.Name}; downloaded files were kept.")
+                    : Loc.I($"Could not finish removing {completion.Name}: {completion.Error}");
                 ShowNotification(StatusMessage, completion.Error is null ? completion.Destination : null);
             }
         }
         catch (Exception exception)
         {
-            StatusMessage = $"Could not refresh the queue: {exception.Message}";
+            StatusMessage = Loc.I($"Could not refresh the queue: {exception.Message}");
         }
         finally
         {
@@ -408,7 +420,7 @@ public sealed partial class MainViewModel(
     {
         foreach (var snapshot in snapshots)
         {
-            var error = snapshot.Diagnostics?.TorrentError ?? (snapshot.State == "Error" ? "Torrent stopped due to an error." : null);
+            var error = snapshot.Diagnostics?.TorrentError ?? (snapshot.State == "Error" ? Loc.T("Torrent stopped due to an error.") : null);
             var prefix = snapshot.Id + ":";
             if (string.IsNullOrWhiteSpace(error))
             {
@@ -419,7 +431,7 @@ public sealed partial class MainViewModel(
             var key = prefix + error;
             if (_notifiedErrors.Add(key))
             {
-                StatusMessage = $"Error in {snapshot.Name}: {error}";
+                StatusMessage = Loc.I($"Error in {snapshot.Name}: {error}");
                 ShowNotification(StatusMessage, snapshot.Destination);
             }
         }
@@ -438,7 +450,8 @@ public sealed partial class MainViewModel(
 
             if (_notifiedStalled.Add(snapshot.Id))
             {
-                StatusMessage = $"{snapshot.Name} is stalled: {snapshot.Diagnostics?.StallSummary ?? "no data received"}.";
+                var reason = snapshot.Diagnostics?.StallSummary ?? Loc.T("no data received");
+                StatusMessage = Loc.I($"{snapshot.Name} is stalled: {reason}.");
                 ShowNotification(StatusMessage, null);
             }
         }
@@ -487,7 +500,7 @@ public sealed partial class MainViewModel(
 
         if (shouldWarn)
         {
-            PortWarningMessage = $"Inbound port {_settings.ListenPort} (TCP/UDP) appears closed (0 incoming peers). Open it in your router for much faster downloads.";
+            PortWarningMessage = Loc.I($"Inbound port {_settings.ListenPort} (TCP/UDP) appears closed (0 incoming peers). Open it in your router for much faster downloads.");
             if (!_portWarningDismissed)
             {
                 HasPortWarning = true;
@@ -496,7 +509,7 @@ public sealed partial class MainViewModel(
             if (!_portWarningNotified)
             {
                 _portWarningNotified = true;
-                StatusMessage = $"Inbound port {_settings.ListenPort} appears closed (0 incoming peers) — click 'How to open port' to boost speed.";
+                StatusMessage = Loc.I($"Inbound port {_settings.ListenPort} appears closed (0 incoming peers) — click 'How to open port' to boost speed.");
                 ShowNotification(StatusMessage, null);
             }
         }
@@ -513,7 +526,7 @@ public sealed partial class MainViewModel(
     {
         if (Notification is not null && now >= _notificationUntil)
         {
-            if (StatusMessage == Notification.Message) StatusMessage = "Ready.";
+            if (StatusMessage == Notification.Message) StatusMessage = Loc.T("Ready.");
             Notification = null;
         }
     }

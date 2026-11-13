@@ -12,6 +12,8 @@ A local-first Windows 11 x64 BitTorrent client built with Avalonia and MonoTorre
 - Select or deselect individual files before starting a torrent, and change that selection later from the row's **Files…** button. **Move…** relocates a torrent's files to another folder.
 - Every row carries its own Resume/Pause, Recheck, Files, Move, Show folder and Remove actions; removing keeps downloaded files.
 - **Trackers…** adds trackers to a queued torrent (kept across restarts). **Delete files…** asks first, then removes the torrent and its downloaded files; plain **Remove** keeps them.
+- **Download in order** (sequential), per torrent from the file dialog or as the default for new torrents, so a video or the first files can be opened before the rest arrives.
+- English and Spanish interface; "System" follows the Windows display language.
 - Optional "maximum active downloads": extra torrents wait as *Queued* and start automatically when a slot frees up. Duplicate adds are rejected with a clear message.
 - Persist confirmed additions and removals immediately; restore the selected files, pause intent and actual download folder from `%LocalAppData%\\fast-torrent-download`.
 - Pause and remove with per-torrent progress feedback and a bounded tracker-stop announce wait, while other rows keep updating.
@@ -19,6 +21,7 @@ A local-first Windows 11 x64 BitTorrent client built with Avalonia and MonoTorre
 - A download that receives nothing for five minutes shows as *Stalled* with the reason (for example "No seeders in the swarm · 17 other downloaders waiting"), using tracker scrape counts. A stalled torrent stops keeping the computer awake, frees its active-download slot and reannounces less often.
 - Inspect per-torrent speed diagnostics (refreshed every three seconds): connected/receiving peers, piece coverage, trackers, DHT, effective limits and reported errors.
 - Completed downloads automatically leave the queue while files stay on disk. An eight-second notification and the current session's latest 50 activity messages provide access to their folders.
+- IPv6 peers alongside IPv4 (on by default; off when the listener is pinned to one IPv4 address).
 - Configure DHT, peer exchange, local peer discovery, UPnP/NAT-PMP, a specific inbound IPv4 listener, optional required peer encryption and bandwidth caps.
 - Close to tray (optional), start with Windows minimized to the tray (optional), and system/light/dark theme.
 
@@ -53,12 +56,22 @@ dotnet run --project tests/FastTorrentDownload.Tests --configuration Release -- 
 
 Use `--ui-smoke` instead for manual inspection, or `--ui-shots <folder>` to render the fixture queue and Settings page to PNG files in both themes for design review. Old settings containing a seeding ratio remain readable; the obsolete ratio is ignored because completed downloads are removed automatically.
 
+## Translations
+
+Interface text is keyed by its English wording. Spanish lives in `src/FastTorrentDownload/Services/Localization/es.txt` (`English ⇒ Español`, one per line); after editing it run:
+
+```powershell
+python scripts/Generate-Localization.py
+```
+
+The focused checks scan the source and fail when a string shown through `Loc.T`, `Loc.I` or a XAML literal has no Spanish entry, when placeholders differ, or when the generated `LocSpanish.cs` is stale. `--ui-shots <folder> --lang es` renders the Spanish UI and lists any string that fell back to English.
+
 ## Create release artifacts
 
 On Windows with Inno Setup installed, run:
 
 ```powershell
-.\\scripts\\Publish.ps1 -Version 0.6.2
+.\\scripts\\Publish.ps1 -Version 0.7.0
 ```
 
 It creates a self-contained Windows x64 portable ZIP, an SHA-256 checksum file, and a per-user installer under `artifacts\\`. The installer is intentionally unsigned: publish the checksum beside it and expect Microsoft SmartScreen to show a reputation warning for early releases. Release files carry a GitHub build-provenance attestation: `gh attestation verify <file> --repo stuckinowhere/fast-torrent-download` confirms a file was built by this repository's release workflow. Only the installer registers the `magnet:` protocol and `.torrent` association (both optional tasks, per-user, removed on uninstall); the portable ZIP does not touch the registry.

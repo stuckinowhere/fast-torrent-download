@@ -25,52 +25,66 @@ public sealed record TorrentDiagnostics(
             if (!IsStalled) return null;
             if (HasNoSeeders)
             {
-                var waiting = SwarmLeechers is > 0 ? $" · {SwarmLeechers} other downloaders waiting" : string.Empty;
-                var held = AvailablePiecesPercent is { } percent and < 100 ? $" · connected peers hold {percent:0.0}%" : string.Empty;
-                return $"No seeders in the swarm{waiting}{held}";
+                var waiting = SwarmLeechers is > 0 ? Loc.I($" · {SwarmLeechers} other downloaders waiting") : string.Empty;
+                var held = AvailablePiecesPercent is { } percent and < 100 ? Loc.I($" · connected peers hold {percent:0.0}%") : string.Empty;
+                return Loc.T("No seeders in the swarm") + waiting + held;
             }
 
-            if (ConnectedPeers == 0) return KnownPeers == 0 ? "No peers found" : "No peer accepts a connection";
+            if (ConnectedPeers == 0) return KnownPeers == 0 ? Loc.T("No peers found") : Loc.T("No peer accepts a connection");
             return AvailablePiecesPercent is < 100
-                ? $"Connected peers hold only {AvailablePiecesPercent:0.0}% of the data"
-                : "Connected peers are not sending data";
+                ? Loc.I($"Connected peers hold only {AvailablePiecesPercent:0.0}% of the data")
+                : Loc.T("Connected peers are not sending data");
         }
     }
 
     public string Describe(long downloadRate)
     {
         var peers = PeerError is null
-            ? $"Known peers: {KnownPeers} · connected: {ConnectedPeers} (incoming on port {ListenPort}: {IncomingPeers}) · sending data to us: {ReceivingPeers} · connected seeders: {ConnectedSeeders}"
-            : $"Peer statistics unavailable: {PeerError}";
+            ? Loc.I($"Known peers: {KnownPeers} · connected: {ConnectedPeers} (incoming on port {ListenPort}: {IncomingPeers}) · sending data to us: {ReceivingPeers} · connected seeders: {ConnectedSeeders}")
+            : Loc.I($"Peer statistics unavailable: {PeerError}");
         var portStatus = PeerError is null && IsInboundPortLikelyClosed
-            ? $"\nInbound port {ListenPort} (TCP/UDP): 0 incoming peers — open port {ListenPort} in your router (Port Forwarding) to allow all seeders to connect."
+            ? "\n" + Loc.I($"Inbound port {ListenPort} (TCP/UDP): 0 incoming peers — open port {ListenPort} in your router (Port Forwarding) to allow all seeders to connect.")
             : string.Empty;
-        var coverage = AvailablePiecesPercent is { } percent ? $"{percent:0.0}%" : "unknown";
+        var coverage = AvailablePiecesPercent is { } percent ? $"{percent:0.0}%" : Loc.T("unknown");
         var swarm = SwarmSeeders is { } swarmSeeders
-            ? $"Swarm reported by trackers: {swarmSeeders} seeders · {SwarmLeechers ?? 0} downloaders"
-            : "Swarm reported by trackers: not available yet";
-        var trackers = Trackers.Count == 0 ? "No trackers; discovery depends on DHT / peer exchange."
-            : string.Join(Environment.NewLine, Trackers.Select(tracker => $"{tracker.Address} · {tracker.State}{(string.IsNullOrWhiteSpace(tracker.Message) ? "" : " · " + tracker.Message)}"));
-        return $"{Diagnosis(downloadRate)}\n{peers}{portStatus}\n{swarm}\nPiece coverage (local + connected peers): {coverage}\nDHT: {DhtState} · {DhtNodes} nodes\nEffective download limit: {Limit(DownloadLimit)} · upload limit: {Limit(UploadLimit)}\nTorrent / disk error: {TorrentError ?? "none reported"}\nTrackers:\n{trackers}";
+            ? Loc.I($"Swarm reported by trackers: {swarmSeeders} seeders · {SwarmLeechers ?? 0} downloaders")
+            : Loc.T("Swarm reported by trackers: not available yet");
+        var trackers = Trackers.Count == 0 ? Loc.T("No trackers; discovery depends on DHT / peer exchange.")
+            : string.Join(Environment.NewLine, Trackers.Select(tracker => $"{tracker.Address} · {Loc.Known(tracker.State)}{(string.IsNullOrWhiteSpace(tracker.Message) ? "" : " · " + tracker.Message)}"));
+        var dht = Loc.Known(DhtState);
+        var downloadLimit = Limit(DownloadLimit);
+        var uploadLimit = Limit(UploadLimit);
+        var error = TorrentError ?? Loc.T("none reported");
+        return string.Join("\n",
+            Diagnosis(downloadRate),
+            peers + portStatus,
+            swarm,
+            Loc.I($"Piece coverage (local + connected peers): {coverage}"),
+            Loc.I($"DHT: {dht} · {DhtNodes} nodes"),
+            Loc.I($"Effective download limit: {downloadLimit} · upload limit: {uploadLimit}"),
+            Loc.I($"Torrent / disk error: {error}"),
+            Loc.T("Trackers:"),
+            trackers);
     }
 
     public string Diagnosis(long downloadRate)
     {
-        if (TorrentError is not null) return "The torrent reports an error; inspect the details below.";
-        if (PeerError is not null) return "Peer statistics could not be read; the bottleneck is unknown.";
+        if (TorrentError is not null) return Loc.T("The torrent reports an error; inspect the details below.");
+        if (PeerError is not null) return Loc.T("Peer statistics could not be read; the bottleneck is unknown.");
         if (IsStalled)
         {
+            var minutes = (int)StalledFor!.Value.TotalMinutes;
             return HasNoSeeders
-                ? $"Stalled: {StallSummary}. The download cannot finish until a seeder comes back; look for another source of this torrent."
-                : $"Stalled for {(int)StalledFor!.Value.TotalMinutes} min: {StallSummary}.";
+                ? Loc.I($"Stalled: {StallSummary}. The download cannot finish until a seeder comes back; look for another source of this torrent.")
+                : Loc.I($"Stalled for {minutes} min: {StallSummary}.");
         }
-        if (ConnectedPeers == 0) return KnownPeers == 0 ? "No known peers currently available." : "Peer candidates exist, but none are connected.";
-        if (ReceivingPeers == 0) return "Peers are connected, but none are currently sending us data.";
-        if (DownloadLimit > 0 && downloadRate >= DownloadLimit * 0.9) return "Download speed is close to the configured limit.";
-        if (AvailablePiecesPercent is < 100) return "Local data and connected peers do not currently cover all pieces.";
-        if (IsInboundPortLikelyClosed) return $"Data is flowing, but inbound port {ListenPort} appears closed (0 incoming peers) — opening it in your router can significantly increase speed.";
-        return "Data is flowing; these indicators do not establish a single speed bottleneck.";
+        if (ConnectedPeers == 0) return KnownPeers == 0 ? Loc.T("No known peers currently available.") : Loc.T("Peer candidates exist, but none are connected.");
+        if (ReceivingPeers == 0) return Loc.T("Peers are connected, but none are currently sending us data.");
+        if (DownloadLimit > 0 && downloadRate >= DownloadLimit * 0.9) return Loc.T("Download speed is close to the configured limit.");
+        if (AvailablePiecesPercent is < 100) return Loc.T("Local data and connected peers do not currently cover all pieces.");
+        if (IsInboundPortLikelyClosed) return Loc.I($"Data is flowing, but inbound port {ListenPort} appears closed (0 incoming peers) — opening it in your router can significantly increase speed.");
+        return Loc.T("Data is flowing; these indicators do not establish a single speed bottleneck.");
     }
 
-    private static string Limit(long value) => value <= 0 ? "unlimited" : TransferFormatting.Rate(value);
+    private static string Limit(long value) => value <= 0 ? Loc.T("unlimited") : TransferFormatting.Rate(value);
 }

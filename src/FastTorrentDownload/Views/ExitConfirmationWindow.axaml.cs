@@ -1,3 +1,4 @@
+using FastTorrentDownload.Services;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 
@@ -7,7 +8,11 @@ public sealed record ExitChoice(bool RememberChoice);
 
 public partial class ExitConfirmationWindow : Window
 {
-    public ExitConfirmationWindow() => InitializeComponent();
+    public ExitConfirmationWindow()
+    {
+        InitializeComponent();
+        Loc.Apply(this);
+    }
 
     private void Exit_Click(object? sender, RoutedEventArgs eventArgs) => Close(new ExitChoice(RememberCheckBox.IsChecked == true));
     private void Cancel_Click(object? sender, RoutedEventArgs eventArgs) => Close(null);

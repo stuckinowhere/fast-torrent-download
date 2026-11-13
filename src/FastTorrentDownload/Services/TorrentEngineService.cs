@@ -109,7 +109,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
                     AppLogger.LogException("Saved queue could not be restored", exception);
                     if (_engine is null)
                     {
-                        _restoreWarnings.Add("The saved queue could not be read and was set aside as engine-state.json.corrupt. The queue starts empty; downloaded files are untouched.");
+                        _restoreWarnings.Add(Loc.T("The saved queue could not be read and was set aside as engine-state.json.corrupt. The queue starts empty; downloaded files are untouched."));
                         try { File.Copy(_paths.EngineStateFile, _paths.EngineStateFile + ".corrupt", overwrite: true); }
                         catch (Exception copyFailure) when (copyFailure is IOException or UnauthorizedAccessException) { }
                     }
@@ -127,7 +127,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
                 {
                     var name = SanitizeDisplayName(manager.Name);
                     AppLogger.Log("Restored torrent rejected: saved file paths leave the download folder.");
-                    _restoreWarnings.Add($"“{name}” was not restored: its saved file paths point outside its download folder.");
+                    _restoreWarnings.Add(Loc.I($"“{name}” was not restored: its saved file paths point outside its download folder."));
                     _extraTrackers.Remove(DescribeInfoHashes(manager.InfoHashes));
                     await _engine.RemoveAsync(manager);
                     continue;

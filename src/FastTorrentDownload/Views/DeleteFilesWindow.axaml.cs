@@ -1,3 +1,4 @@
+using FastTorrentDownload.Services;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 
@@ -8,8 +9,9 @@ public partial class DeleteFilesWindow : Window
     public DeleteFilesWindow(string torrentName, string folder, string sizeLabel)
     {
         InitializeComponent();
+        Loc.Apply(this);
         NameTextBlock.Text = torrentName;
-        DetailTextBlock.Text = $"{sizeLabel} verified so far · {folder}";
+        DetailTextBlock.Text = Loc.I($"{sizeLabel} verified so far · {folder}");
     }
 
     private void Delete_Click(object? sender, RoutedEventArgs eventArgs) => Close(true);

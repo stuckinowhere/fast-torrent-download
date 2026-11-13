@@ -13,6 +13,7 @@ using System.Diagnostics;
 
 if (Array.IndexOf(args, "--ui-shots") is var shotsIndex and >= 0)
 {
+    UiSmoke.FixtureLanguage = Array.IndexOf(args, "--lang") is var languageIndex and >= 0 && args.ElementAtOrDefault(languageIndex + 1) == "es" ? "Español" : "English";
     UiSmoke.ShotsDirectory = Path.GetFullPath(args.ElementAtOrDefault(shotsIndex + 1) ?? "ui-shots");
     return UiSmoke.Run();
 }
@@ -401,6 +402,8 @@ Check("pause intents copy and normalize without aliasing", () =>
     Require(settings.PausedInfoHashes.Count == 1 && settings.PausedInfoHashes.Contains("ABCDEF"));
 });
 
+LocalizationCheck.Run();
+passed++;
 await CheckRestoredDestinationAsync();
 await CheckSingleInstanceForwardingAsync();
 await CheckFileSelectionDuplicateAndQueueAsync();

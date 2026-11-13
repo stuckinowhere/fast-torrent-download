@@ -47,6 +47,9 @@ internal static class UiSmoke
     /// <summary>Set by <c>--ui-shots &lt;dir&gt;</c>: render the fixture UI to PNG files for design review.</summary>
     public static string? ShotsDirectory { get; set; }
 
+    /// <summary>Language written to the fixture settings. The checks assert English text, so that is the default.</summary>
+    public static string FixtureLanguage { get; set; } = "English";
+
     private static async Task CaptureAsync(string directory)
     {
         var desktop = (IClassicDesktopStyleApplicationLifetime)Application.Current!.ApplicationLifetime!;
@@ -80,12 +83,16 @@ internal static class UiSmoke
             await ShotAsync("queue-light-min");
             main.Width = 1180;
             main.Height = 760;
-            main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Settings"))
+            main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, Loc.T("Settings")))
                 .RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
             await ShotAsync("settings-light");
             viewModel.SetTheme("Dark");
             await ShotAsync("settings-dark");
             Console.WriteLine($"Saved UI captures to {directory}");
+            if (Loc.Language != Loc.English)
+            {
+                Console.WriteLine($"Untranslated strings seen in this run: {(Loc.Misses.Count == 0 ? "none" : string.Join(" | ", Loc.Misses))}");
+            }
             main.RequestExit();
         }
         catch (Exception exception)
@@ -457,7 +464,7 @@ internal static class UiSmoke
         {
             DefaultDownloadFolder = root, ListenPort = listenPort, ListenAddress = "127.0.0.1",
             EnableDht = false, EnablePeerExchange = false, EnablePortForwarding = false,
-            EnableLocalPeerDiscovery = false, Theme = "Dark", ConfirmCloseBeforeExit = false
+            EnableLocalPeerDiscovery = false, Theme = "Dark", ConfirmCloseBeforeExit = false, Language = FixtureLanguage
         });
         using var engine = new ClientEngine(new EngineSettingsBuilder
         {

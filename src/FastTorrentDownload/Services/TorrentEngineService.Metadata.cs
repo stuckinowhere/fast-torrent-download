@@ -51,8 +51,8 @@ public sealed partial class TorrentEngineService
         var elapsed = 0;
         while (!token.IsCancellationRequested)
         {
-            onProgress?.Invoke($"Fetching torrent file list… ({elapsed}s / 60s)",
-                "Payload files will only download after you confirm the selection.");
+            onProgress?.Invoke(Loc.I($"Fetching torrent file list… ({elapsed}s / 60s)"),
+                Loc.T("Payload files will only download after you confirm the selection."));
             await Task.Delay(1000, token);
             elapsed++;
         }

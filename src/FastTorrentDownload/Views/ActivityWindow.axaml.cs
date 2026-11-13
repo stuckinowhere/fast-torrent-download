@@ -1,3 +1,4 @@
+using FastTorrentDownload.Services;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using Avalonia.Controls;
@@ -15,6 +16,7 @@ public partial class ActivityWindow : Window
         Activity = activity;
         DataContext = this;
         InitializeComponent();
+        Loc.Apply(this);
     }
 
     private void OpenFolder_Click(object? sender, RoutedEventArgs args)
@@ -23,12 +25,20 @@ public partial class ActivityWindow : Window
         try
         {
             if (Directory.Exists(folder)) Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
-            else ((Button)sender).Content = "Folder unavailable";
+            else ((Button)sender).Content = Loc.T("Folder unavailable");
         }
         catch (Exception exception)
         {
             Services.AppLogger.LogException("Open activity folder failed", exception);
-            ((Button)sender).Content = "Could not open folder";
+            ((Button)sender).Content = Loc.T("Could not open folder");
+        }
+    }
+
+    private void Row_Loaded(object? sender, RoutedEventArgs args)
+    {
+        if (sender is Control row)
+        {
+            Loc.Apply(row);
         }
     }
 

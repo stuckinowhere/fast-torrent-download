@@ -17,8 +17,9 @@ public partial class UpdateAvailableWindow : Window
         _update = update;
         _updateService = updateService;
         InitializeComponent();
-        DescriptionTextBlock.Text = $"{update.Tag} is newer than the installed version.";
-        InstallButton.Content = $"Install {update.Tag}";
+        Loc.Apply(this);
+        DescriptionTextBlock.Text = Loc.I($"{update.Tag} is newer than the installed version.");
+        InstallButton.Content = Loc.I($"Install {update.Tag}");
         Closing += (_, _) => _fetch.Cancel();
     }
 
@@ -34,15 +35,15 @@ public partial class UpdateAvailableWindow : Window
         LaterButton.IsEnabled = false;
         ErrorTextBlock.IsVisible = false;
         ProgressPanel.IsVisible = true;
-        SetStatus("Downloading update…", 0);
+        SetStatus(Loc.T("Downloading update…"), 0);
         try
         {
             var progress = new Progress<double>(value =>
-                Dispatcher.UIThread.Post(() => SetStatus("Downloading update…", value * 100)));
+                Dispatcher.UIThread.Post(() => SetStatus(Loc.T("Downloading update…"), value * 100)));
             var packagePath = await _updateService.DownloadAndVerifyAsync(_update, progress, _fetch.Token);
-            Dispatcher.UIThread.Post(() => SetStatus("Verified. Staging install…", 100));
+            Dispatcher.UIThread.Post(() => SetStatus(Loc.T("Verified. Staging install…"), 100));
             await Task.Run(() => _updateService.StageAndLaunchInstaller(packagePath, _update.Tag), _fetch.Token);
-            Dispatcher.UIThread.Post(() => SetStatus("Restarting on the new version…", 100));
+            Dispatcher.UIThread.Post(() => SetStatus(Loc.T("Restarting on the new version…"), 100));
             await Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None);
             Close(true);
         }
@@ -53,7 +54,7 @@ public partial class UpdateAvailableWindow : Window
         catch (Exception exception)
         {
             AppLogger.LogException($"Update to {_update.Tag} failed", exception);
-            ErrorTextBlock.Text = $"Could not install the update: {exception.Message}";
+            ErrorTextBlock.Text = Loc.I($"Could not install the update: {exception.Message}");
             ErrorTextBlock.IsVisible = true;
             InstallButton.IsEnabled = true;
             LaterButton.IsEnabled = true;

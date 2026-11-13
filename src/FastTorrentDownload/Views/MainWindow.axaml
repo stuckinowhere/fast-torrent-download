@@ -55,7 +55,7 @@
                BorderThickness="0" Background="Transparent" IsVisible="{Binding HasTorrents}">
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="vm:TorrentRowViewModel">
-            <Border Classes="torrent-row">
+            <Border Classes="torrent-row" Loaded="Row_Loaded">
               <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="8" ColumnSpacing="16">
                 <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="15" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
                            ToolTip.Tip="{Binding Name}" />
@@ -182,11 +182,21 @@
 
           <StackPanel Spacing="7">
             <TextBlock Text="Appearance" FontWeight="Bold" FontSize="18" />
-            <ComboBox x:Name="ThemeComboBox" Width="160" HorizontalAlignment="Left" SelectedIndex="0">
-              <ComboBoxItem Content="System" />
-              <ComboBoxItem Content="Light" />
-              <ComboBoxItem Content="Dark" />
-            </ComboBox>
+            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="8">
+              <TextBlock Text="Theme" VerticalAlignment="Center" />
+              <ComboBox x:Name="ThemeComboBox" Grid.Column="1" Width="160" HorizontalAlignment="Left" SelectedIndex="0">
+                <ComboBoxItem Content="System" />
+                <ComboBoxItem Content="Light" />
+                <ComboBoxItem Content="Dark" />
+              </ComboBox>
+              <TextBlock Grid.Row="1" Text="Language" VerticalAlignment="Center" />
+              <ComboBox x:Name="LanguageComboBox" Grid.Row="1" Grid.Column="1" Width="160" HorizontalAlignment="Left" SelectedIndex="0">
+                <ComboBoxItem Content="System" />
+                <ComboBoxItem Content="English" />
+                <ComboBoxItem Content="Español" />
+              </ComboBox>
+            </Grid>
+            <TextBlock Text="“System” follows the Windows display language. A language change applies the next time the app starts." Opacity="0.68" TextWrapping="Wrap" />
           </StackPanel>
         </StackPanel>
       </ScrollViewer>
