@@ -17,6 +17,26 @@ if (Array.IndexOf(args, "--ui-shots") is var shotsIndex and >= 0)
     UiSmoke.ShotsDirectory = Path.GetFullPath(args.ElementAtOrDefault(shotsIndex + 1) ?? "ui-shots");
     return UiSmoke.Run();
 }
+if (Array.IndexOf(args, "--swarm-probe") is var probeIndex and >= 0)
+{
+    var probeSeconds = Array.IndexOf(args, "--seconds") is var secondsIndex and >= 0 && int.TryParse(args.ElementAtOrDefault(secondsIndex + 1), out var requested) ? requested : 90;
+    var haveFile = Array.IndexOf(args, "--have") is var haveIndex and >= 0 ? args.ElementAtOrDefault(haveIndex + 1) : null;
+    return await SwarmProbe.RunAsync(args[probeIndex + 1], probeSeconds, haveFile);
+}
+if (Array.IndexOf(args, "--stress-completion") is var completionIndex and >= 0)
+{
+    // Repeats the offline completion and removal checks to flush out timing-dependent failures.
+    var rounds = int.TryParse(args.ElementAtOrDefault(completionIndex + 1), out var parsedRounds) ? parsedRounds : 50;
+    for (var round = 1; round <= rounds; round++)
+    {
+        await CheckCompletedRemovalAsync(selectedOnly: true);
+        await CheckCompletedRemovalAsync(selectedOnly: false);
+        await CheckCompletedRemovalAsync(selectedOnly: true, manualRemoval: true);
+    }
+
+    Console.WriteLine($"PASS {rounds} completion stress rounds");
+    return 0;
+}
 if (Array.IndexOf(args, "--stress-ipv6") is var stressIndex and >= 0)
 {
     // Repeats the two live IPv6 transfers to flush out timing-dependent failures.
@@ -281,6 +301,11 @@ Check("a download with no payload is reported as stalled with the reason and bac
     Require(dead.Diagnosis(0).StartsWith("Stalled: No seeders in the swarm") && dead.Diagnosis(0).Contains("another source"));
     Require(dead.Describe(0).Contains("Swarm reported by trackers: 0 seeders · 17 downloaders"));
     Require(flowing.Describe(0).Contains("Swarm reported by trackers: not available yet"));
+    // Peers that claim every piece but never send are named, and do not count as seeders or coverage.
+    var claimed = dead with { SilentSeeders = 2 };
+    Require(claimed.HasNoSeeders && claimed.StallSummary == $"No seeders in the swarm · 17 other downloaders waiting · connected peers hold {62.7:0.0}% · 2 peers claim the full file but send nothing");
+    Require((claimed with { SilentSeeders = 1, SwarmSeeders = null }).StallSummary == $"Connected peers hold only {62.7:0.0}% of the data · 1 peer claims the full file but sends nothing");
+    Require(claimed.Describe(0).Contains("Peers that claim the full file but send nothing: 2") && !dead.Describe(0).Contains("claim the full file"));
     // A tracker-reported seeder that is not connected is a reachability problem, not a dead swarm.
     var unreachable = dead with { SwarmSeeders = 3 };
     Require(!unreachable.HasNoSeeders && unreachable.StallSummary == $"Connected peers hold only {62.7:0.0}% of the data");
@@ -423,7 +448,8 @@ await CheckFileSelectionDuplicateAndQueueAsync();
 await CheckStalledTorrentFreesQueueSlotAsync();
 await CheckDeadSwarmIsNamedFromTrackerScrapeAsync();
 await CheckTrackersPersistDeleteFilesAndCorruptStateAsync();
-passed += 6;
+await SilentSeederCheck.RunAsync();
+passed += 7;
 await CheckCompletedRemovalAsync(selectedOnly: true);
 await CheckCompletedRemovalAsync(selectedOnly: false);
 await CheckCompletedRemovalAsync(selectedOnly: true, manualRemoval: true);
@@ -451,6 +477,19 @@ static void Require(bool condition)
     if (!condition)
     {
         throw new InvalidOperationException("Assertion failed.");
+    }
+}
+
+static string ReadLogTail(AppPaths paths)
+{
+    try
+    {
+        var text = File.ReadAllText(Path.Combine(paths.LogsDirectory, "app.log"));
+        return text.Length > 2500 ? text[^2500..] : text;
+    }
+    catch (IOException)
+    {
+        return "no log";
     }
 }
 
@@ -489,6 +528,7 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
         }.ToSettings());
         var paths = new AppPaths(Path.Combine(root, "app-state"));
         paths.EnsureDirectories();
+        AppLogger.Init(paths); // So a failure below can quote what the service logged.
         var service = new TorrentEngineService(paths);
         // Inject an isolated offline engine so the check never touches the user's saved queue.
         typeof(TorrentEngineService).GetField("_engine", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(service, engine);
@@ -596,7 +636,15 @@ static async Task CheckCompletedRemovalAsync(bool selectedOnly, bool manualRemov
         {
             while (viewModel.Torrents.Count != 1)
             {
-                await Task.Delay(50, removalTimeout.Token);
+                if (removalTimeout.IsCancellationRequested)
+                {
+                    throw new InvalidOperationException(
+                        $"The completed torrent was not removed: manager={manager.State} progress={manager.PartialProgress} error={manager.Error?.Reason}:{manager.Error?.Exception?.Message} " +
+                        $"status='{viewModel.StatusMessage}' rows=[{string.Join("; ", viewModel.Torrents.Select(row => $"{row.Name}:{row.State}:{row.Operation}"))}] " +
+                        $"activity=[{string.Join(" | ", viewModel.Activity.Take(2).Select(entry => entry.Message))}] log=[{ReadLogTail(paths)}]");
+                }
+
+                await Task.Delay(50);
                 await viewModel.RefreshAsync();
             }
         }
@@ -991,6 +1039,30 @@ static async Task CheckTrackersPersistDeleteFilesAndCorruptStateAsync()
             Require(payloadFiles.All(file => !File.Exists(file)) && File.Exists(bystander) && Directory.Exists(destination));
             Require(!Directory.Exists(Path.Combine(destination, "followups")));
             Require((await reopened.GetSnapshotsAsync()).Count == 0);
+        }
+
+        // A queue saved before trackers were persisted gets the public rescue set once, and it is recorded at that start.
+        var legacySource = Path.Combine(root, "legacy.torrent");
+        ((BEncodedDictionary)torrent["info"])["name"] = new BEncodedString("legacy");
+        await File.WriteAllBytesAsync(legacySource, torrent.Encode());
+        await using (var writer = new TorrentEngineService(paths))
+        {
+            await writer.InitializeAsync(offline);
+            var legacy = await writer.PrepareAddAsync(legacySource, destination);
+            await writer.CommitAddAsync(legacy, ["a.bin"], startImmediately: false);
+        }
+        var legacyState = BEncodedValue.Decode<BEncodedDictionary>(await File.ReadAllBytesAsync(paths.EngineStateFile));
+        legacyState.Remove("ExtraTrackers");
+        await File.WriteAllBytesAsync(paths.EngineStateFile, legacyState.Encode());
+        for (var start = 1; start <= 2; start++)
+        {
+            await using var upgraded = new TorrentEngineService(paths);
+            await upgraded.InitializeAsync(offline);
+            var trackers = (await upgraded.GetSnapshotsAsync()).Single().Diagnostics!.Trackers;
+            Require(trackers.Count == TorrentEngineService.DefaultPublicTrackers.Count); // The rescue set, once: not doubled on the second start.
+            var recorded = (BEncodedDictionary)BEncodedValue.Decode<BEncodedDictionary>(await File.ReadAllBytesAsync(paths.EngineStateFile))["ExtraTrackers"];
+            Require(((BEncodedList)recorded.Values.Single()).Count == TorrentEngineService.DefaultPublicTrackers.Count);
+            if (start == 2) await upgraded.RemoveAsync((await upgraded.GetSnapshotsAsync()).Single().Id);
         }
 
         // A state file that cannot be parsed must not stop the app; it is set aside, not overwritten silently.

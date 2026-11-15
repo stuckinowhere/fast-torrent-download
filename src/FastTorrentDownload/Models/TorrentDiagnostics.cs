@@ -10,7 +10,8 @@ public sealed record TorrentDiagnostics(
     long DownloadLimit, long UploadLimit, IReadOnlyList<TrackerDiagnostic> Trackers,
     string? PeerError = null, string? TorrentError = null,
     int IncomingPeers = 0, int ListenPort = 51413,
-    int? SwarmSeeders = null, int? SwarmLeechers = null, TimeSpan? StalledFor = null)
+    int? SwarmSeeders = null, int? SwarmLeechers = null, TimeSpan? StalledFor = null,
+    int SilentSeeders = 0)
 {
     public bool IsInboundPortLikelyClosed => ConnectedPeers >= 5 && IncomingPeers == 0;
     public bool IsStalled => StalledFor is not null;
@@ -23,17 +24,24 @@ public sealed record TorrentDiagnostics(
         get
         {
             if (!IsStalled) return null;
+            // Peers that advertise the whole torrent but keep us choked and never send; ConnectedSeeders excludes them.
+            var silent = SilentSeeders switch
+            {
+                0 => string.Empty,
+                1 => Loc.T(" · 1 peer claims the full file but sends nothing"),
+                _ => Loc.I($" · {SilentSeeders} peers claim the full file but send nothing")
+            };
             if (HasNoSeeders)
             {
                 var waiting = SwarmLeechers is > 0 ? Loc.I($" · {SwarmLeechers} other downloaders waiting") : string.Empty;
                 var held = AvailablePiecesPercent is { } percent and < 100 ? Loc.I($" · connected peers hold {percent:0.0}%") : string.Empty;
-                return Loc.T("No seeders in the swarm") + waiting + held;
+                return Loc.T("No seeders in the swarm") + waiting + held + silent;
             }
 
             if (ConnectedPeers == 0) return KnownPeers == 0 ? Loc.T("No peers found") : Loc.T("No peer accepts a connection");
-            return AvailablePiecesPercent is < 100
+            return (AvailablePiecesPercent is < 100
                 ? Loc.I($"Connected peers hold only {AvailablePiecesPercent:0.0}% of the data")
-                : Loc.T("Connected peers are not sending data");
+                : Loc.T("Connected peers are not sending data")) + silent;
         }
     }
 
@@ -44,6 +52,9 @@ public sealed record TorrentDiagnostics(
             : Loc.I($"Peer statistics unavailable: {PeerError}");
         var portStatus = PeerError is null && IsInboundPortLikelyClosed
             ? "\n" + Loc.I($"Inbound port {ListenPort} (TCP/UDP): 0 incoming peers — open port {ListenPort} in your router (Port Forwarding) to allow all seeders to connect.")
+            : string.Empty;
+        var silentPeers = SilentSeeders > 0
+            ? "\n" + Loc.I($"Peers that claim the full file but send nothing: {SilentSeeders}")
             : string.Empty;
         var coverage = AvailablePiecesPercent is { } percent ? $"{percent:0.0}%" : Loc.T("unknown");
         var swarm = SwarmSeeders is { } swarmSeeders
@@ -57,7 +68,7 @@ public sealed record TorrentDiagnostics(
         var error = TorrentError ?? Loc.T("none reported");
         return string.Join("\n",
             Diagnosis(downloadRate),
-            peers + portStatus,
+            peers + portStatus + silentPeers,
             swarm,
             Loc.I($"Piece coverage (local + connected peers): {coverage}"),
             Loc.I($"DHT: {dht} · {DhtNodes} nodes"),

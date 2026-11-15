@@ -152,6 +152,9 @@ This torrent has no trackers; it relies on DHT and peer exchange. ⇒ Este torre
 No seeders in the swarm ⇒ Sin semillas en el enjambre
  · {0} other downloaders waiting ⇒  · {0} descargadores más esperando
  · connected peers hold {0:0.0}% ⇒  · los pares conectados tienen el {0:0.0} %
+ · 1 peer claims the full file but sends nothing ⇒  · 1 par dice tener el archivo completo pero no envía nada
+ · {0} peers claim the full file but send nothing ⇒  · {0} pares dicen tener el archivo completo pero no envían nada
+Peers that claim the full file but send nothing: {0} ⇒ Pares que dicen tener el archivo completo pero no envían nada: {0}
 No peers found ⇒ No se encontraron pares
 No peer accepts a connection ⇒ Ningún par acepta la conexión
 Connected peers hold only {0:0.0}% of the data ⇒ Los pares conectados solo tienen el {0:0.0} % de los datos

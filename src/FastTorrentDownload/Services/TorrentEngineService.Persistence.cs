@@ -23,8 +23,7 @@ public sealed partial class TorrentEngineService
                 buffer = await RequireEngine().SaveStateAsync();
                 break;
             }
-            catch (Exception exception) when (attempt < 6 &&
-                (exception is IOException && (exception.HResult & 0xffff) is 32 or 33 || exception is UnauthorizedAccessException))
+            catch (Exception exception) when (attempt < 6 && IsBusyFile(exception))
             {
                 // MonoTorrent can still be writing or replacing fast-resume data after a state transition;
                 // Windows reports a file that is mid-replacement as a sharing violation or as access denied.
@@ -70,6 +69,38 @@ public sealed partial class TorrentEngineService
             if (File.Exists(temporaryFile))
             {
                 File.Delete(temporaryFile);
+            }
+        }
+    }
+
+    // Windows reports a file that another writer still holds, or that is mid-replacement, as a
+    // sharing violation (32), a lock violation (33) or access denied.
+    private static bool IsBusyFile(Exception exception) =>
+        exception is IOException && (exception.HResult & 0xffff) is 32 or 33 || exception is UnauthorizedAccessException;
+
+    /// <summary>
+    /// Stops a torrent. MonoTorrent writes its fast-resume file while stopping and that write can
+    /// collide with the one it made a moment earlier (seen when a torrent is stopped right as it
+    /// completes). The stop itself has happened by then, so a busy-file error is not a failed stop:
+    /// the next state save writes the fast-resume data again.
+    /// </summary>
+    private static async Task StopSafelyAsync(TorrentManager manager)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await manager.StopAsync(StopAnnounceTimeout);
+                return;
+            }
+            catch (Exception exception) when (attempt < 6 && IsBusyFile(exception))
+            {
+                if (manager.State == TorrentState.Stopped)
+                {
+                    return;
+                }
+
+                await Task.Delay(100);
             }
         }
     }

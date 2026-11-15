@@ -144,6 +144,20 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
                 await SplitTrackerTiersAsync(manager);
             }
 
+            if (!_stateRecordsTrackers && _entries.Count > 0)
+            {
+                // Record the rescue trackers now; otherwise every start seeds them again until some other save happens.
+                try
+                {
+                    await SaveStateAsync();
+                    _stateRecordsTrackers = true;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    AppLogger.LogException("Could not record restored trackers", exception);
+                }
+            }
+
             var repaused = 0;
             foreach (var manager in _engine.Torrents)
             {
@@ -343,7 +357,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
         var restart = manager.State != TorrentState.Stopped;
         if (restart)
         {
-            await manager.StopAsync(StopAnnounceTimeout);
+            await StopSafelyAsync(manager);
         }
 
         await ApplyPickerAsync(manager, sequential);
@@ -419,7 +433,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
         }
 
         // MonoTorrent only relocates payload files while the torrent is stopped.
-        await manager.StopAsync(StopAnnounceTimeout);
+        await StopSafelyAsync(manager);
         await manager.MoveFilesAsync(safeDestination, overWriteExisting: false);
         await _gate.WaitAsync();
         try
@@ -479,14 +493,14 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
     public Task PauseAsync(string id) => RunOperationAsync(id, "Stopping…", async manager =>
     {
         await SetRunIntentAsync(manager, paused: true);
-        await manager.StopAsync(StopAnnounceTimeout);
+        await StopSafelyAsync(manager);
     });
 
     public Task RecheckAsync(string id) => RunOperationAsync(id, "Rechecking…", async manager =>
     {
         _completionErrors.TryRemove(id, out _);
         await SetRunIntentAsync(manager, paused: false);
-        await manager.StopAsync(StopAnnounceTimeout);
+        await StopSafelyAsync(manager);
         await manager.HashCheckAsync(autoStart: true);
     });
 
@@ -550,7 +564,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
 
     private async Task RemoveCoreAsync(string id, TorrentManager manager, bool deleteFiles = false)
     {
-        await manager.StopAsync(StopAnnounceTimeout);
+        await StopSafelyAsync(manager);
         var savePath = manager.SavePath;
         var payloadFiles = manager.Files.Select(file => file.FullPath).ToArray();
         await _gate.WaitAsync();
