@@ -18,6 +18,7 @@ A local-first Windows 11 x64 BitTorrent client built with Avalonia and MonoTorre
 - Persist confirmed additions and removals immediately; restore the selected files, pause intent and actual download folder from `%LocalAppData%\\fast-torrent-download`.
 - Pause and remove with per-torrent progress feedback and a bounded tracker-stop announce wait, while other rows keep updating.
 - Show verified bytes and progress for the selected files, fractional KiB/MiB rates and estimated time remaining.
+- Peers that advertise the whole torrent but keep the client choked and never send are named in the stall reason and do not count as seeders or as piece coverage.
 - A download that receives nothing for five minutes shows as *Stalled* with the reason (for example "No seeders in the swarm · 17 other downloaders waiting"), using tracker scrape counts. A stalled torrent stops keeping the computer awake, frees its active-download slot and reannounces less often.
 - Inspect per-torrent speed diagnostics (refreshed every three seconds): connected/receiving peers, piece coverage, trackers, DHT, effective limits and reported errors.
 - Completed downloads automatically leave the queue while files stay on disk. An eight-second notification and the current session's latest 50 activity messages provide access to their folders.
@@ -54,7 +55,7 @@ On an interactive Windows desktop, exercise the native views with an isolated fi
 dotnet run --project tests/FastTorrentDownload.Tests --configuration Release -- --ui-smoke-auto
 ```
 
-`--stress-ipv6 <rounds>` repeats the two live IPv6 transfers to flush out timing-dependent failures. Use `--ui-smoke` instead for manual inspection, or `--ui-shots <folder>` to render the fixture queue and Settings page to PNG files in both themes for design review. Old settings containing a seeding ratio remain readable; the obsolete ratio is ignored because completed downloads are removed automatically.
+`--stress-ipv6 <rounds>` and `--stress-completion <rounds>` repeat the live IPv6 transfers and the completion/removal checks to flush out timing-dependent failures. `--swarm-probe <file.torrent> [--seconds 90] [--have <fastresume file>]` joins a real swarm from outside the app at a trickle rate and prints, per peer and without addresses, who is choking whom and whether any payload arrives: it tells a swarm that will not send apart from a client that is not asking. Use `--ui-smoke` instead for manual inspection, or `--ui-shots <folder>` to render the fixture queue and Settings page to PNG files in both themes for design review. Old settings containing a seeding ratio remain readable; the obsolete ratio is ignored because completed downloads are removed automatically.
 
 ## Translations
 
@@ -71,7 +72,7 @@ The focused checks scan the source and fail when a string shown through `Loc.T`,
 On Windows with Inno Setup installed, run:
 
 ```powershell
-.\\scripts\\Publish.ps1 -Version 0.7.1
+.\\scripts\\Publish.ps1 -Version 0.7.2
 ```
 
 It creates a self-contained Windows x64 portable ZIP, an SHA-256 checksum file, and a per-user installer under `artifacts\\`. The installer is intentionally unsigned: publish the checksum beside it and expect Microsoft SmartScreen to show a reputation warning for early releases. Release files carry a GitHub build-provenance attestation: `gh attestation verify <file> --repo stuckinowhere/fast-torrent-download` confirms a file was built by this repository's release workflow. Only the installer registers the `magnet:` protocol and `.torrent` association (both optional tasks, per-user, removed on uninstall); the portable ZIP does not touch the registry.

@@ -88,7 +88,7 @@ public sealed partial class TorrentEngineService
             }
             else if (_stalledIds.TryAdd(pair.Key, 0))
             {
-                AppLogger.Log($"Torrent stalled: no payload for {(int)stalledFor.Value.TotalMinutes} min · swarm seeders={swarm?.Seeders.ToString() ?? "unknown"} leechers={swarm?.Leechers.ToString() ?? "unknown"} · connected={diagnostics.ConnectedPeers} connectedSeeders={diagnostics.ConnectedSeeders} · coverage={diagnostics.AvailablePiecesPercent?.ToString("0.0") ?? "unknown"}%");
+                AppLogger.Log($"Torrent stalled: no payload for {(int)stalledFor.Value.TotalMinutes} min · swarm seeders={swarm?.Seeders.ToString() ?? "unknown"} leechers={swarm?.Leechers.ToString() ?? "unknown"} · connected={diagnostics.ConnectedPeers} connectedSeeders={diagnostics.ConnectedSeeders} silentSeeders={diagnostics.SilentSeeders} · coverage={diagnostics.AvailablePiecesPercent?.ToString("0.0") ?? "unknown"}%");
             }
 
             var state = manager.State == TorrentState.Stopped && queued.Contains(DescribeInfoHashes(manager.InfoHashes))
@@ -255,6 +255,7 @@ public sealed partial class TorrentEngineService
         var receiving = 0;
         var seeders = 0;
         var incoming = 0;
+        var silentSeeders = 0;
         double? coverage = null;
         string? peerError = null;
         try
@@ -264,7 +265,12 @@ public sealed partial class TorrentEngineService
             known += connected;
             receiving = peers.Count(peer => peer.Monitor.DownloadRate > 0);
             incoming = peers.Count(peer => peer.ConnectionDirection == Direction.Incoming);
-            seeders = peers.Count(peer => peer.IsSeeder);
+            // A peer that advertises every piece, keeps us choked and has never sent a byte is not a
+            // source. Counting such peers as seeders reported "100% coverage" for a swarm in which
+            // every peer that actually answers holds the same incomplete copy.
+            var silent = peers.Where(peer => peer.IsSeeder && peer.IsChoking && peer.Monitor.DataBytesReceived == 0).ToArray();
+            silentSeeders = silent.Length;
+            seeders = peers.Count(peer => peer.IsSeeder) - silentSeeders;
             if (manager.HasMetadata)
             {
                 if (manager.Bitfield.AllTrue || seeders > 0)
@@ -274,7 +280,7 @@ public sealed partial class TorrentEngineService
                 else
                 {
                     var pieces = new BitField(manager.Bitfield.Length).Or(manager.Bitfield);
-                    foreach (var peer in peers)
+                    foreach (var peer in peers.Except(silent))
                     {
                         if (peer.BitField.Length == pieces.Length) pieces.Or(peer.BitField);
                     }
@@ -295,7 +301,10 @@ public sealed partial class TorrentEngineService
         return new TorrentDiagnostics(known, connected, receiving, seeders, coverage,
             _settings.EnableDht && manager.CanUseDht ? engine.Dht.State.ToString() : Loc.T("Disabled for this torrent"), engine.Dht.NodeCount,
             EffectiveLimit(engine.Settings.MaximumDownloadRate, manager.Settings.MaximumDownloadRate),
-            EffectiveLimit(engine.Settings.MaximumUploadRate, manager.Settings.MaximumUploadRate), trackers, peerError, error, incoming, _settings.ListenPort);
+            EffectiveLimit(engine.Settings.MaximumUploadRate, manager.Settings.MaximumUploadRate), trackers, peerError, error, incoming, _settings.ListenPort)
+        {
+            SilentSeeders = silentSeeders
+        };
     }
 
     public static long EffectiveLimit(long global, long torrent) => global <= 0 ? torrent : torrent <= 0 ? global : Math.Min(global, torrent);
