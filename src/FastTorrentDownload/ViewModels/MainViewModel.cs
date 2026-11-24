@@ -21,6 +21,7 @@ public sealed partial class MainViewModel(
     private readonly Dictionary<string, int> _closedPortStreaks = new();
     private readonly HashSet<string> _notifiedErrors = new();
     private readonly HashSet<string> _notifiedStalled = new();
+    private bool _phoneAlertFailureShown;
     private bool _portWarningDismissed;
     private bool _portWarningNotified;
     private AppSettings _settings = new();
@@ -57,6 +58,9 @@ public sealed partial class MainViewModel(
     [ObservableProperty] private string _trayToolTipText = "fast torrent download";
 
     public AppSettings Settings => _settings;
+
+    /// <summary>The most recent phone alert still being sent, or a completed task. Checks await it.</summary>
+    public Task PendingPhoneAlert { get; private set; } = Task.CompletedTask;
 
     public string AppVersionLabel => $"v{AppInfo.Version}";
 
@@ -274,6 +278,7 @@ public sealed partial class MainViewModel(
         var startupChanged = _settings.StartWithWindows != updatedSettings.StartWithWindows;
         var languageChanged = _settings.Language != updatedSettings.Language;
         _settings = updatedSettings.Copy();
+        _phoneAlertFailureShown = false;
         ApplyTheme(_settings.Theme);
         StatusMessage = languageChanged
             ? Loc.T("Settings saved. The language changes the next time the app starts.")
@@ -402,6 +407,8 @@ public sealed partial class MainViewModel(
                     ? Loc.I($"Completed {completion.Name}; downloaded files were kept.")
                     : Loc.I($"Could not finish removing {completion.Name}: {completion.Error}");
                 ShowNotification(StatusMessage, completion.Error is null ? completion.Destination : null);
+                // The data is complete either way; a failed removal only leaves the row in the queue.
+                SendPhoneAlert(Loc.I($"Download complete: {completion.Name}"), problem: false);
             }
         }
         catch (Exception exception)
@@ -433,6 +440,7 @@ public sealed partial class MainViewModel(
             {
                 StatusMessage = Loc.I($"Error in {snapshot.Name}: {error}");
                 ShowNotification(StatusMessage, snapshot.Destination);
+                SendPhoneAlert(StatusMessage, problem: true);
             }
         }
     }
@@ -453,6 +461,7 @@ public sealed partial class MainViewModel(
                 var reason = snapshot.Diagnostics?.StallSummary ?? Loc.T("no data received");
                 StatusMessage = Loc.I($"{snapshot.Name} is stalled: {reason}.");
                 ShowNotification(StatusMessage, null);
+                SendPhoneAlert(StatusMessage, problem: true);
             }
         }
     }
@@ -510,6 +519,46 @@ public sealed partial class MainViewModel(
             {
                 _portWarningNotified = true;
                 StatusMessage = Loc.I($"Inbound port {_settings.ListenPort} appears closed (0 incoming peers) — click 'How to open port' to boost speed.");
+                ShowNotification(StatusMessage, null);
+            }
+        }
+    }
+
+    // Fire and forget: an alert must never delay the queue refresh that raised it.
+    private void SendPhoneAlert(string text, bool problem)
+    {
+        if (!_settings.TelegramEnabled || (problem && !_settings.TelegramNotifyProblems))
+        {
+            return;
+        }
+
+        var token = SecretProtector.Unprotect(_settings.TelegramBotToken);
+        var chat = _settings.TelegramChatId;
+        PendingPhoneAlert = SendAsync(PendingPhoneAlert);
+
+        async Task SendAsync(Task previous)
+        {
+            await previous; // Alerts leave in the order they were raised.
+            TelegramResult result;
+            try
+            {
+                result = await TelegramNotifier.SendAsync(token, chat, text);
+            }
+            catch (Exception exception)
+            {
+                AppLogger.Log($"Telegram alert failed: {exception.GetType().Name}.");
+                return;
+            }
+
+            if (result.Ok)
+            {
+                _phoneAlertFailureShown = false;
+            }
+            else if (!_phoneAlertFailureShown)
+            {
+                // Once per run of failures: a broken setup must not fill the activity list.
+                _phoneAlertFailureShown = true;
+                StatusMessage = Loc.I($"Telegram alert not sent: {result.Error}");
                 ShowNotification(StatusMessage, null);
             }
         }

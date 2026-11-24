@@ -164,8 +164,8 @@
       },
       "MonoTorrent": {
         "type": "Transitive",
-        "resolved": "3.0.2",
-        "contentHash": "kWy0mLj2MKX9uUGe3lnNYfyQhthjUK4IAMNJO8llXP9yB3ZYfGaAy9ag20wMcjTz2YfhKOW/uZ5FR//BYZGeYA==",
+        "resolved": "3.0.3-alpha.unstable.rev0049",
+        "contentHash": "iaqVZgfgfSPrOsBavX1Mgwt8MToO/vtVigJJxLjOl33IOImuFZOEJPpkNv7+ELq0Gq86h4/38E+2DR8CD+LhKA==",
         "dependencies": {
           "Mono.Nat": "3.0.0",
           "ReusableTasks": "4.0.0"
@@ -217,7 +217,7 @@
           "Avalonia.Desktop": "[12.1.6, )",
           "Avalonia.Themes.Fluent": "[12.1.6, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "MonoTorrent": "[3.0.2, )"
+          "MonoTorrent": "[3.0.3-alpha.unstable.rev0049, )"
         }
       }
     }

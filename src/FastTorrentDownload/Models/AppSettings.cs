@@ -28,6 +28,13 @@ public sealed class AppSettings
     public bool ConfirmCloseBeforeExit { get; set; } = true;
     public bool CloseToTray { get; set; } = true;
     public bool StartWithWindows { get; set; }
+    /// <summary>Opt-in: the name of each finished download is sent to the user's own Telegram bot.</summary>
+    public bool TelegramEnabled { get; set; }
+    /// <summary>The bot token, encrypted for this Windows account by <c>SecretProtector</c>; never plain text.</summary>
+    public string TelegramBotToken { get; set; } = string.Empty;
+    public string TelegramChatId { get; set; } = string.Empty;
+    /// <summary>Also alert when a download stalls or stops with an error.</summary>
+    public bool TelegramNotifyProblems { get; set; } = true;
     public HashSet<string> PausedInfoHashes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public AppSettings Copy()
@@ -51,6 +58,8 @@ public sealed class AppSettings
         MaximumActiveDownloads = Math.Max(0, MaximumActiveDownloads);
         Theme = Theme is "Light" or "Dark" or "System" ? Theme : "System";
         Language = Language is "English" or "Español" or "System" ? Language : "System";
+        TelegramBotToken = TelegramBotToken?.Trim() ?? string.Empty;
+        TelegramChatId = TelegramChatId?.Trim() ?? string.Empty;
         PausedInfoHashes = new HashSet<string>(
             PausedInfoHashes.Where(hash => !string.IsNullOrWhiteSpace(hash)),
             StringComparer.OrdinalIgnoreCase);

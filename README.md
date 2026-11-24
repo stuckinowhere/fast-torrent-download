@@ -10,6 +10,7 @@ A local-first Windows 11 x64 BitTorrent client built with Avalonia and MonoTorre
 
 - Add a user-provided magnet link or `.torrent` file to a chosen download folder. The installer can register the app for `magnet:` links and `.torrent` files; a second launch hands its link to the running window.
 - Select or deselect individual files before starting a torrent, and change that selection later from the row's **Files…** button. **Move…** relocates a torrent's files to another folder.
+- Deselected files stay out of the download folder. A piece shared with a selected file still has to be downloaded whole; the bytes that belong to a deselected file are kept in the app's cache and move into the folder only if you select that file later. A deselected file you already have in the folder is left untouched.
 - Every row carries its own Resume/Pause, Recheck, Files, Move, Show folder and Remove actions; removing keeps downloaded files.
 - **Trackers…** adds trackers to a queued torrent (kept across restarts). **Delete files…** asks first, then removes the torrent and its downloaded files; plain **Remove** keeps them.
 - **Download in order** (sequential), per torrent from the file dialog or as the default for new torrents, so a video or the first files can be opened before the rest arrives.
@@ -23,6 +24,8 @@ A local-first Windows 11 x64 BitTorrent client built with Avalonia and MonoTorre
 - Inspect per-torrent speed diagnostics (refreshed every three seconds): connected/receiving peers, piece coverage, trackers, DHT, effective limits and reported errors.
 - Completed downloads automatically leave the queue while files stay on disk. An eight-second notification and the current session's latest 50 activity messages provide access to their folders.
 - IPv6 peers alongside IPv4 (on by default; off when the listener is pinned to one IPv4 address).
+- Optional **phone alerts**: a Telegram message from your own bot when a download finishes, and optionally when one stalls or fails. Set up under Settings with **Detect chat** and **Send test**.
+- Payload files are created as NTFS sparse files, so a large download starts writing at once instead of waiting while Windows fills the whole file with zeros.
 - Configure DHT, peer exchange, local peer discovery, UPnP/NAT-PMP, a specific inbound IPv4 listener, optional required peer encryption and bandwidth caps.
 - Close to tray (optional), start with Windows minimized to the tray (optional), and system/light/dark theme.
 
@@ -31,6 +34,8 @@ The current checks include real loopback transfers with a stalled tracker, pause
 ## Privacy
 
 Magnet file lists come from the swarm (DHT, peer exchange, trackers). The optional **Fetch magnet file lists from public .torrent caches** setting is off by default: when enabled, the info-hash of each magnet you add is sent to itorrents.org, torrage.info and btcache.me to resolve the file list faster; only the info-hash-verified file list is used from a cache response, never its tracker or web-seed URLs. The update check contacts `api.github.com` only.
+
+Phone alerts are off by default. When enabled, the name of each finished (or, optionally, stalled or failed) download is sent to your own Telegram bot through `api.telegram.org`; nothing else is sent. The bot token is stored encrypted with Windows DPAPI for your Windows account, never in plain text, and is never written to the log.
 
 Listener binding applies to incoming peer/DHT sockets. It is **not** a VPN kill switch or a complete outbound leak-prevention feature: tracker HTTP and other outbound transports are not claimed to be bound.
 
@@ -72,7 +77,7 @@ The focused checks scan the source and fail when a string shown through `Loc.T`,
 On Windows with Inno Setup installed, run:
 
 ```powershell
-.\\scripts\\Publish.ps1 -Version 0.7.2
+.\\scripts\\Publish.ps1 -Version 0.8.0
 ```
 
 It creates a self-contained Windows x64 portable ZIP, an SHA-256 checksum file, and a per-user installer under `artifacts\\`. The installer is intentionally unsigned: publish the checksum beside it and expect Microsoft SmartScreen to show a reputation warning for early releases. Release files carry a GitHub build-provenance attestation: `gh attestation verify <file> --repo stuckinowhere/fast-torrent-download` confirms a file was built by this repository's release workflow. Only the installer registers the `magnet:` protocol and `.torrent` association (both optional tasks, per-user, removed on uninstall); the portable ZIP does not touch the registry.

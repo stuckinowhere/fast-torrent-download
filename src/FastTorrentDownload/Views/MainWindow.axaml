@@ -173,6 +173,32 @@
           </StackPanel>
 
           <StackPanel Spacing="7">
+            <TextBlock Text="Phone alerts" FontWeight="Bold" FontSize="18" />
+            <CheckBox x:Name="TelegramCheckBox" Content="Send a Telegram message when a download finishes" />
+            <TextBlock Text="Off by default. When on, the name of each finished download is sent to your own Telegram bot through api.telegram.org. The bot token is stored encrypted for your Windows account." Opacity="0.68" TextWrapping="Wrap" />
+            <!-- Shown only when switched on: the default page stays short. -->
+            <StackPanel Spacing="7" Margin="0,8,0,0" IsVisible="{Binding #TelegramCheckBox.IsChecked}">
+              <StackPanel Spacing="2" Opacity="0.68">
+                <TextBlock Text="1. In Telegram, open @BotFather, send /newbot and paste the token it gives you below." TextWrapping="Wrap" />
+                <TextBlock Text="2. Send any message to your new bot." TextWrapping="Wrap" />
+                <TextBlock Text="3. Press Detect chat, then Send test." TextWrapping="Wrap" />
+              </StackPanel>
+              <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="8">
+                <TextBlock Text="Bot token" VerticalAlignment="Center" />
+                <TextBox x:Name="TelegramTokenTextBox" Grid.Column="1" Width="440" HorizontalAlignment="Left" PasswordChar="•" Classes="revealPasswordButton" />
+                <TextBlock Grid.Row="1" Text="Chat" VerticalAlignment="Center" />
+                <WrapPanel Grid.Row="1" Grid.Column="1">
+                  <TextBox x:Name="TelegramChatTextBox" Width="180" Margin="0,0,12,0" VerticalAlignment="Center" />
+                  <Button x:Name="TelegramDetectButton" Content="Detect chat" Click="TelegramDetect_Click" Margin="0,0,12,0" />
+                  <Button x:Name="TelegramTestButton" Content="Send test" Click="TelegramTest_Click" />
+                </WrapPanel>
+              </Grid>
+              <TextBlock x:Name="TelegramStatusTextBlock" TextWrapping="Wrap" IsVisible="False" />
+              <CheckBox x:Name="TelegramProblemsCheckBox" Content="Also alert when a download stalls or stops with an error" />
+            </StackPanel>
+          </StackPanel>
+
+          <StackPanel Spacing="7">
             <TextBlock Text="Behaviour" FontWeight="Bold" FontSize="18" />
             <WrapPanel>
               <CheckBox x:Name="CloseToTrayCheckBox" Content="Closing the window keeps downloads running in the tray" Margin="0,0,18,8" />

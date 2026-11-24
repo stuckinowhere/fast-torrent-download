@@ -10,7 +10,7 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <AssemblyName>FastTorrentDownload</AssemblyName>
     <RootNamespace>FastTorrentDownload</RootNamespace>
-    <Version>0.7.2</Version>
+    <Version>0.8.0</Version>
     <Product>fast torrent download</Product>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <!-- Views use constructor injection and compiled XAML; they are never loaded through AvaloniaXamlLoader. -->
@@ -24,6 +24,6 @@
     <PackageReference Include="Avalonia.Desktop" Version="12.1.6" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.6" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-    <PackageReference Include="MonoTorrent" Version="3.0.2" />
+    <PackageReference Include="MonoTorrent" Version="3.0.3-alpha.unstable.rev0049" />
   </ItemGroup>
 </Project>
