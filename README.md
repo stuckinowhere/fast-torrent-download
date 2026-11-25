@@ -77,7 +77,7 @@ The focused checks scan the source and fail when a string shown through `Loc.T`,
 On Windows with Inno Setup installed, run:
 
 ```powershell
-.\\scripts\\Publish.ps1 -Version 0.8.0
+.\\scripts\\Publish.ps1 -Version 0.8.1
 ```
 
 It creates a self-contained Windows x64 portable ZIP, an SHA-256 checksum file, and a per-user installer under `artifacts\\`. The installer is intentionally unsigned: publish the checksum beside it and expect Microsoft SmartScreen to show a reputation warning for early releases. Release files carry a GitHub build-provenance attestation: `gh attestation verify <file> --repo stuckinowhere/fast-torrent-download` confirms a file was built by this repository's release workflow. Only the installer registers the `magnet:` protocol and `.torrent` association (both optional tasks, per-user, removed on uninstall); the portable ZIP does not touch the registry.
