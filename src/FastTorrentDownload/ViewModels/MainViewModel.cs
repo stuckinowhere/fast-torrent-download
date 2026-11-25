@@ -81,6 +81,13 @@ public sealed partial class MainViewModel(
         {
             NotifyActionFailure(warning);
         }
+
+        // The updater script could not replace the app's files last time; say so once.
+        if (AppUpdateService.TakeFailedUpdate() is { } failedTag &&
+            Version.TryParse(failedTag.TrimStart('v', 'V'), out var failedVersion) && failedVersion > AppInfo.Parsed)
+        {
+            NotifyActionFailure(Loc.I($"Update {failedTag} could not be installed because the app's files were in use. This version keeps working; use Check update to try again."));
+        }
     }
 
     public Task<TorrentAddPreview> PrepareAddAsync(

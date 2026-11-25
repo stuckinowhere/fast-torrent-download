@@ -322,6 +322,7 @@ public static class LocSpanish
         ["The update package does not contain the application executable."] = "El paquete de actualización no contiene el ejecutable de la aplicación.",
         ["Cannot self-update: the application executable was not found next to the running app."] = "No se puede actualizar: no se encontró el ejecutable junto a la aplicación en ejecución.",
         ["The application path is unknown; cannot register startup."] = "Se desconoce la ruta de la aplicación; no se puede registrar el inicio con Windows.",
+        ["Update {0} could not be installed because the app's files were in use. This version keeps working; use Check update to try again."] = "La actualización {0} no se pudo instalar porque los archivos de la app estaban en uso. Esta versión sigue funcionando; usa Buscar actualización para intentarlo de nuevo.",
         ["Phone alerts"] = "Avisos al móvil",
         ["Send a Telegram message when a download finishes"] = "Enviar un mensaje de Telegram cuando termine una descarga",
         ["Off by default. When on, the name of each finished download is sent to your own Telegram bot through api.telegram.org. The bot token is stored encrypted for your Windows account."] = "Desactivado por defecto. Si lo activas, el nombre de cada descarga terminada se envía a tu propio bot de Telegram a través de api.telegram.org. El token del bot se guarda cifrado para tu cuenta de Windows.",

@@ -9,6 +9,38 @@ public sealed class AppUpdateService
     private static readonly HttpClient Client = CreateClient();
     private const int MaxChecksumBytes = 4096;
 
+    private static string UpdateRoot => Path.Combine(Path.GetTempPath(), "fast-torrent-download-update");
+
+    /// <summary>Written by the updater script when it could not replace the app's files; holds the tag only.</summary>
+    public static string FailureNotePath => Path.Combine(UpdateRoot, "last-failure.txt");
+
+    /// <summary>
+    /// Returns the tag of an update that could not be installed, once, so the next start can say so.
+    /// The note lives in a folder any program of this user can write, so only a plain version is accepted.
+    /// </summary>
+    public static string? TakeFailedUpdate(string? notePath = null)
+    {
+        var path = notePath ?? FailureNotePath;
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            using var reader = new StreamReader(path);
+            var buffer = new char[64];
+            var tag = new string(buffer, 0, reader.ReadBlock(buffer, 0, buffer.Length)).Trim();
+            reader.Dispose();
+            File.Delete(path);
+            return IsSafeTag(tag) ? tag : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     public async Task<string> DownloadAndVerifyAsync(
         AvailableUpdate update,
         IProgress<double>? progress = null,
@@ -20,8 +52,7 @@ public sealed class AppUpdateService
             throw new InvalidDataException("The release tag is not a plain version number; the update was not downloaded.");
         }
 
-        var workDirectory = Directory.CreateDirectory(Path.Combine(
-            Path.GetTempPath(), "fast-torrent-download-update", update.Tag.TrimStart('v', 'V'))).FullName;
+        var workDirectory = Directory.CreateDirectory(Path.Combine(UpdateRoot, update.Tag.TrimStart('v', 'V'))).FullName;
         var packagePath = Path.Combine(workDirectory, "update-portable.zip");
 
         await DownloadAsync(update.PackageUrl, packagePath, progress, cancellationToken);
@@ -72,7 +103,7 @@ public sealed class AppUpdateService
 
         var scriptPath = Path.Combine(workDirectory, "apply-update.ps1");
         File.WriteAllText(scriptPath, BuildUpdaterScript(
-            Environment.ProcessId, stageDirectory, installDirectory, executablePath, workDirectory, tag));
+            Environment.ProcessId, stageDirectory, installDirectory, executablePath, workDirectory, tag, FailureNotePath));
         Process.Start(new ProcessStartInfo("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"")
         {
             UseShellExecute = false,
@@ -162,24 +193,58 @@ public sealed class AppUpdateService
         return Convert.ToHexString(hash);
     }
 
-    private static string BuildUpdaterScript(int processId, string stageDirectory, string installDirectory, string executablePath, string workDirectory, string tag)
+    /// <summary>
+    /// The script that replaces the app's files once the app has exited, then starts it again.
+    /// A file still in use (the process winding down, a virus scan) used to end the script at the
+    /// copy: nothing was logged and the app stayed closed. Now the copy waits until the executable
+    /// can be opened for writing, retries for <paramref name="unlockSeconds"/>, logs every failure,
+    /// and the app is started whether the update was applied or not.
+    /// </summary>
+    public static string BuildUpdaterScript(int processId, string stageDirectory, string installDirectory, string executablePath,
+        string workDirectory, string tag, string failureNotePath, int unlockSeconds = 30)
     {
+        if (!IsSafeTag(tag))
+        {
+            throw new InvalidDataException("The release tag is not a plain version number; the update was not installed.");
+        }
+
         // Single quotes inside PowerShell single-quoted strings are escaped by doubling them.
         static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
         return $$"""
             $ErrorActionPreference = 'Stop'
             $log = {{Quote(Path.Combine(workDirectory, "apply-update.log"))}}
+            $note = {{Quote(failureNotePath)}}
             "Waiting for process {{processId}} to exit (update {{tag}})" | Out-File $log
             $deadline = (Get-Date).AddMinutes(2)
             while ((Get-Process -Id {{processId}} -ErrorAction SilentlyContinue) -ne $null -and (Get-Date) -lt $deadline) {
                 Start-Sleep -Milliseconds 250
             }
-            Start-Sleep -Seconds 1
-            "Copying staged files" | Out-File $log -Append
-            Copy-Item (Join-Path {{Quote(stageDirectory)}} '*') -Destination {{Quote(installDirectory)}} -Recurse -Force
-            "Starting updated app" | Out-File $log -Append
+            $applied = $false
+            $reason = 'the application file stayed in use'
+            $deadline = (Get-Date).AddSeconds({{unlockSeconds}})
+            do {
+                try {
+                    # Nothing is copied until the executable can be opened for writing: a file in use must not leave a half-updated install.
+                    $probe = [System.IO.File]::Open({{Quote(executablePath)}}, 'Open', 'ReadWrite', 'None')
+                    $probe.Dispose()
+                    Copy-Item (Join-Path {{Quote(stageDirectory)}} '*') -Destination {{Quote(installDirectory)}} -Recurse -Force
+                    $applied = $true
+                } catch {
+                    $reason = $_.Exception.Message
+                    "Not applied yet: $reason" | Out-File $log -Append
+                    Start-Sleep -Milliseconds 500
+                }
+            } while (-not $applied -and (Get-Date) -lt $deadline)
+            if ($applied) {
+                Remove-Item -LiteralPath $note -ErrorAction SilentlyContinue
+                "Update {{tag}} applied" | Out-File $log -Append
+            } else {
+                # The app reads this on its next start and tells the user; it holds the tag only.
+                '{{tag}}' | Out-File -LiteralPath $note -Encoding ascii
+                "Update {{tag}} NOT applied: $reason" | Out-File $log -Append
+            }
+            "Starting app" | Out-File $log -Append
             Start-Process -FilePath {{Quote(executablePath)}} -WorkingDirectory {{Quote(installDirectory)}}
-            "Update {{tag}} applied" | Out-File $log -Append
             """;
     }
 
