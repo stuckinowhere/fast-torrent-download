@@ -37,6 +37,11 @@ if (Array.IndexOf(args, "--stress-completion") is var completionIndex and >= 0)
     Console.WriteLine($"PASS {rounds} completion stress rounds");
     return 0;
 }
+if (args.Contains("--telegram-live"))
+{
+    // Manual: sends one real completion alert to the bot saved in the installed profile.
+    return await TelegramLiveCheck.RunAsync();
+}
 if (Array.IndexOf(args, "--stress-skipped") is var skippedIndex and >= 0)
 {
     // Repeats the deselected-file transfers (hidden data, move, late selection) to flush out timing-dependent failures.
