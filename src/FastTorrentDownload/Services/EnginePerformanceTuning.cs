@@ -5,7 +5,9 @@ namespace FastTorrentDownload.Services;
 // Connection and cache limits tuned above the MonoTorrent defaults (150 engine
 // connections, 8 half-open, 60 per-torrent connections, 5 MiB write cache) so
 // well-seeded swarms and NAT-heavy public swarms ramp up faster on broadband.
-// Verified against MonoTorrent 3.0.2; revisit if the package default set changes.
+// Verified against MonoTorrent 3.0.3-alpha.unstable.rev0049; revisit if the package default set changes.
+// That prerelease is used on purpose: 3.0.2 crashes the process through an unsynchronised queue in
+// PeerExchangeManager.OnAdd (fixed upstream in ca5f216d), and no stable release carries the fix.
 public static class EnginePerformanceTuning
 {
     public const int MaxConnections = 800;

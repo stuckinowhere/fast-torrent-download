@@ -18,6 +18,9 @@
 | IPv6 | `Services/TorrentEngineService.cs` (`CreateListenEndPoints`) | IPv6 listener only when enabled, supported and not pinned to one IPv4 address; loopback `::1` transfer passes. |
 | Localization | `Services/Loc.cs`, `Services/Localization/es.txt`, `scripts/Generate-Localization.py` | English is the key; every shown string has a Spanish entry; state identifiers stay English in logic. |
 | Privacy | `Models/AppSettings.cs` (`UsePublicMetadataCaches`) | Public .torrent caches are contacted only when the setting is on. |
+| Phone alerts | `Services/TelegramNotifier.cs`, `Services/SecretProtector.cs`, `ViewModels/MainViewModel.cs` (`SendPhoneAlert`) | Off by default; token DPAPI-encrypted in settings and never logged; alerts on completion and, optionally, stall or error; failures explained without the token. |
+| Deselected files | `Services/SkippedFileWriter.cs`, `Services/TorrentEngineService.cs` (`ApplyFileSelectionAsync`, `RevealSkipped`) | Data of deselected files goes to `cache/skipped`, never the download folder; revealed only on explicit selection; survives restart, recheck and move; removed when the torrent leaves the queue. |
+| File creation | `Services/TorrentEngineService.cs` (`CreateEngineSettings`, `FileCreationMode`) | Payload files are sparse: no zero-fill before the first block of a large file. |
 
 ## Do not ship without
 

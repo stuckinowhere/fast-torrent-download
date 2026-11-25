@@ -51,6 +51,18 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
     private static readonly ConcurrentDictionary<string, byte[]> CachedMagnetTorrents = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, Task<Torrent?>> InFlightMagnetPrefetches = new(StringComparer.OrdinalIgnoreCase);
     private readonly SystemSleepGuard _sleepGuard = new();
+    // Data of deselected files that shares a piece with a selected file is kept here, outside the download folder.
+    private string SkippedDirectory => Path.Combine(_paths.CacheDirectory, "skipped");
+    private SkippedFileWriter? _skippedWriter;
+    private Factories EngineFactories => Factories.Default.WithPieceWriterCreator(
+        maximumOpenFiles => _skippedWriter = new SkippedFileWriter(new MonoTorrent.PieceWriter.DiskWriter(maximumOpenFiles), SkippedDirectory));
+
+    // Brings a selected file's hidden data into the download folder. Engines built without the writer have none.
+    private void RevealSkipped(ITorrentManagerFile file)
+    {
+        if (_skippedWriter is { } writer) writer.Reveal(file);
+        else SkippedFileWriter.Reveal(SkippedDirectory, file.FullPath);
+    }
     private bool _disposed;
 
     public TorrentEngineService(AppPaths paths) => _paths = paths;
@@ -76,7 +88,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
                 try
                 {
                     var buffer = await File.ReadAllBytesAsync(_paths.EngineStateFile);
-                    _engine = await ClientEngine.RestoreStateAsync(buffer);
+                    _engine = await ClientEngine.RestoreStateAsync(buffer, EngineFactories);
                     var saved = BEncodedValue.Decode<BEncodedDictionary>(buffer);
                     if (saved.TryGetValue("PausedInfoHashes", out var paused) && paused is BEncodedList hashes)
                     {
@@ -116,7 +128,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
                 }
             }
 
-            _engine ??= new ClientEngine(CreateEngineSettings(_settings));
+            _engine ??= new ClientEngine(CreateEngineSettings(_settings), EngineFactories);
             await _engine.UpdateSettingsAsync(CreateEngineSettings(_settings));
             AppLogger.Log($"Engine initialized: listen={_settings.ListenAddress}:{_settings.ListenPort} dht={_settings.EnableDht} pex={_settings.EnablePeerExchange} lpd={_settings.EnableLocalPeerDiscovery} upnp={_settings.EnablePortForwarding} restored={_engine.Torrents.Count} dhtState={_engine.Dht.State} dhtNodes={_engine.Dht.NodeCount} tuning={EnginePerformanceTuning.MaxConnections}c/{EnginePerformanceTuning.MaxHalfOpenConnections}half/{EnginePerformanceTuning.MaxConnectionsPerTorrent}pt");
 
@@ -142,6 +154,13 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
                 await UpgradeLegacyTrackersAsync(manager);
                 await RestoreExtraTrackersAsync(manager);
                 await SplitTrackerTiersAsync(manager);
+            }
+
+            SkippedFileWriter.DeleteOrphans(SkippedDirectory, _engine.Torrents.SelectMany(manager => manager.Files).Select(file => file.FullPath));
+            // A file selected just before a crash may still have its data hidden; priorities are final here.
+            foreach (var file in _engine.Torrents.SelectMany(manager => manager.Files).Where(file => file.Priority != Priority.DoNotDownload))
+            {
+                RevealSkipped(file);
             }
 
             if (!_stateRecordsTrackers && _entries.Count > 0)
@@ -319,7 +338,7 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
         }
     }
 
-    private static async Task ApplyFileSelectionAsync(TorrentManager manager, IReadOnlyCollection<string> selectedFiles)
+    private async Task ApplyFileSelectionAsync(TorrentManager manager, IReadOnlyCollection<string> selectedFiles)
     {
         var selected = selectedFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var file in manager.Files)
@@ -328,6 +347,11 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
             if (file.Priority != priority)
             {
                 await manager.SetFilePriorityAsync(file, priority);
+                if (priority != Priority.DoNotDownload)
+                {
+                    // Bytes of this file that arrived inside a shared piece were kept out of the folder until now.
+                    RevealSkipped(file);
+                }
             }
         }
     }
@@ -597,6 +621,8 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
             _gate.Release();
         }
 
+        // The torrent is stopped and out of the queue: its hidden data for deselected files is no longer needed.
+        SkippedFileWriter.DeleteHidden(SkippedDirectory, payloadFiles);
         if (deleteFiles)
         {
             var deleted = DeleteDownloadedFiles(savePath, payloadFiles);
@@ -736,6 +762,10 @@ public sealed partial class TorrentEngineService : IAsyncDisposable
             MaximumConnections = EnginePerformanceTuning.MaxConnections,
             MaximumHalfOpenConnections = EnginePerformanceTuning.MaxHalfOpenConnections,
             DiskCacheBytes = EnginePerformanceTuning.DiskCacheBytes,
+            // A preallocated, non-sparse file makes NTFS write zeros over everything before the first
+            // block. Pieces arrive in random order, so the first write of a large file stalled every
+            // download until the whole file had been zeroed: 104 s measured for 13.5 GiB on a SATA SSD.
+            FileCreationMode = MonoTorrent.PieceWriter.FileCreationOptions.PreferSparse,
             WebSeedDelay = EnginePerformanceTuning.WebSeedDelay
         };
         return builder.ToSettings();

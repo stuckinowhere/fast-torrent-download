@@ -485,6 +485,11 @@ public partial class MainWindow : Window
         PublicCachesCheckBox.IsChecked = copy.UsePublicMetadataCaches;
         DownloadLimitTextBox.Text = copy.MaximumDownloadKiBPerSecond.ToString(CultureInfo.InvariantCulture);
         UploadLimitTextBox.Text = copy.MaximumUploadKiBPerSecond.ToString(CultureInfo.InvariantCulture);
+        TelegramCheckBox.IsChecked = copy.TelegramEnabled;
+        TelegramTokenTextBox.Text = Services.SecretProtector.Unprotect(copy.TelegramBotToken) ?? string.Empty;
+        TelegramChatTextBox.Text = copy.TelegramChatId;
+        TelegramProblemsCheckBox.IsChecked = copy.TelegramNotifyProblems;
+        ShowTelegramStatus(null);
         CloseToTrayCheckBox.IsChecked = copy.CloseToTray;
         StartWithWindowsCheckBox.IsChecked = copy.StartWithWindows;
         ThemeComboBox.SelectedIndex = copy.Theme switch { "Light" => 1, "Dark" => 2, _ => 0 };
@@ -547,7 +552,28 @@ public partial class MainWindow : Window
             return;
         }
 
+        var telegramToken = TelegramTokenTextBox.Text?.Trim() ?? string.Empty;
+        var telegramChat = TelegramChatTextBox.Text?.Trim() ?? string.Empty;
+        if (TelegramCheckBox.IsChecked == true)
+        {
+            if (!Services.TelegramNotifier.IsValidToken(telegramToken))
+            {
+                ShowSettingsValidationError(Loc.T("Phone alerts need a bot token. Copy it from @BotFather, or turn phone alerts off."));
+                return;
+            }
+
+            if (!Services.TelegramNotifier.IsValidChat(telegramChat))
+            {
+                ShowSettingsValidationError(Loc.T("Phone alerts need a chat. Send a message to your bot and press Detect chat, or turn phone alerts off."));
+                return;
+            }
+        }
+
         var updated = _viewModel.Settings.Copy();
+        updated.TelegramEnabled = TelegramCheckBox.IsChecked == true;
+        updated.TelegramBotToken = Services.SecretProtector.Protect(telegramToken);
+        updated.TelegramChatId = telegramChat;
+        updated.TelegramNotifyProblems = TelegramProblemsCheckBox.IsChecked == true;
         updated.DefaultDownloadFolder = DefaultDownloadFolderTextBox.Text ?? string.Empty;
         updated.MaximumActiveDownloads = maxActive;
         updated.ListenPort = listenPort;
@@ -579,6 +605,60 @@ public partial class MainWindow : Window
         {
             ShowSettingsValidationError(Loc.I($"Could not save settings: {exception.Message}"));
             _viewModel.NotifyActionFailure(Loc.I($"Could not save settings: {exception.Message}"));
+        }
+    }
+
+    private async void TelegramDetect_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        TelegramDetectButton.IsEnabled = false;
+        ShowTelegramStatus(Loc.T("Looking for your chat…"));
+        try
+        {
+            var (chat, error) = await Services.TelegramNotifier.DetectChatAsync(TelegramTokenTextBox.Text?.Trim());
+            if (chat is null)
+            {
+                ShowTelegramStatus(error, isError: true);
+                return;
+            }
+
+            TelegramChatTextBox.Text = chat.Id;
+            ShowTelegramStatus(string.IsNullOrWhiteSpace(chat.Name)
+                ? Loc.T("Chat found. Press Send test.")
+                : Loc.I($"Chat found: {chat.Name}. Press Send test."));
+        }
+        finally
+        {
+            TelegramDetectButton.IsEnabled = true;
+        }
+    }
+
+    private async void TelegramTest_Click(object? sender, RoutedEventArgs eventArgs)
+    {
+        TelegramTestButton.IsEnabled = false;
+        ShowTelegramStatus(Loc.T("Sending…"));
+        try
+        {
+            var result = await Services.TelegramNotifier.SendAsync(TelegramTokenTextBox.Text?.Trim(), TelegramChatTextBox.Text?.Trim(),
+                Loc.T("Test alert from fast torrent download. Phone alerts are working."));
+            ShowTelegramStatus(result.Ok ? Loc.T("Test sent. Check Telegram, then save the settings.") : result.Error, isError: !result.Ok);
+        }
+        finally
+        {
+            TelegramTestButton.IsEnabled = true;
+        }
+    }
+
+    private void ShowTelegramStatus(string? message, bool isError = false)
+    {
+        TelegramStatusTextBlock.Text = message ?? string.Empty;
+        TelegramStatusTextBlock.IsVisible = !string.IsNullOrEmpty(message);
+        if (isError && this.TryFindResource("ErrorForegroundBrush", ActualThemeVariant, out var brush) && brush is Avalonia.Media.IBrush error)
+        {
+            TelegramStatusTextBlock.Foreground = error;
+        }
+        else
+        {
+            TelegramStatusTextBlock.ClearValue(Avalonia.Controls.TextBlock.ForegroundProperty);
         }
     }
 

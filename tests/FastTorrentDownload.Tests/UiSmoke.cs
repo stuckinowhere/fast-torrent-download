@@ -88,6 +88,33 @@ internal static class UiSmoke
             await ShotAsync("settings-light");
             viewModel.SetTheme("Dark");
             await ShotAsync("settings-dark");
+            // The phone-alert section sits below the fold: once filled in with a result shown, once switched off, once at the minimum size.
+            var alerts = main.FindControl<CheckBox>("TelegramCheckBox")!;
+            var settingsScroll = main.FindControl<ScrollViewer>("SettingsScrollViewer")!;
+            async Task ShowAlertsAsync()
+            {
+                await Task.Delay(100);
+                var top = alerts.TranslatePoint(default, settingsScroll)!.Value.Y + settingsScroll.Offset.Y;
+                settingsScroll.Offset = new Vector(0, Math.Max(0, top - 60));
+            }
+
+            await ShowAlertsAsync();
+            main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, Loc.T("Send test")))
+                .RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            await ShotAsync("settings-alerts-dark");
+            viewModel.SetTheme("Light");
+            main.FindControl<TextBox>("TelegramTokenTextBox")!.Text = "wrong";
+            main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, Loc.T("Send test")))
+                .RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            await ShotAsync("settings-alerts-light-error");
+            alerts.IsChecked = false;
+            main.Width = 880;
+            main.Height = 600;
+            await ShowAlertsAsync();
+            await ShotAsync("settings-alerts-light-off-min");
+            main.Width = 1180;
+            main.Height = 760;
+            viewModel.SetTheme("Dark");
             await CaptureDialogsAsync(main, viewModel, directory);
             Console.WriteLine($"Saved UI captures to {directory}");
             if (Loc.Language != Loc.English)
@@ -208,6 +235,30 @@ internal static class UiSmoke
             Require(main.FindControl<TextBox>("SeedRatioTextBox") is null && main.FindControl<TextBox>("DownloadLimitTextBox") is not null, "Completion settings are inconsistent.");
             Require(main.FindControl<CheckBox>("PublicCachesCheckBox")!.IsChecked == false && main.FindControl<TextBox>("MaxActiveTextBox")!.Text == "0",
                 "Privacy and queue settings must default to off / unlimited.");
+            // Phone alerts: the saved token loads masked, Send test and Detect chat work on the typed values, and saving needs both.
+            var token = main.FindControl<TextBox>("TelegramTokenTextBox")!;
+            var chat = main.FindControl<TextBox>("TelegramChatTextBox")!;
+            var telegramStatus = main.FindControl<TextBlock>("TelegramStatusTextBlock")!;
+            Require(main.FindControl<CheckBox>("TelegramCheckBox")!.IsChecked == true && token.Text == FakeTelegram.Token && token.PasswordChar != default(char) &&
+                    chat.Text == FakeTelegram.Chat && main.FindControl<CheckBox>("TelegramProblemsCheckBox")!.IsChecked == true && !telegramStatus.IsVisible,
+                "Saved phone-alert settings must load into the Settings page, with the token masked.");
+            Button("Send test").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            while (telegramStatus.Text?.StartsWith("Test sent.", StringComparison.Ordinal) != true) await Task.Delay(50, timeout.Token);
+            Require(_telegram!.SentTexts().Single().StartsWith("Test alert from fast torrent download.", StringComparison.Ordinal) && Button("Send test").IsEnabled, "Send test must post one test alert.");
+            _telegram.Answer = (path, _) => path.EndsWith("/getUpdates", StringComparison.Ordinal)
+                ? (200, """{"ok":true,"result":[{"update_id":9,"message":{"chat":{"id":777,"type":"private","first_name":"Tester"}}}]}""")
+                : (200, """{"ok":true,"result":{}}""");
+            Button("Detect chat").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            while (chat.Text != "777") await Task.Delay(50, timeout.Token);
+            Require(telegramStatus.Text == "Chat found: Tester. Press Send test.", $"Unexpected detect status: {telegramStatus.Text}");
+            token.Text = "not a token";
+            Button("Send test").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            while (telegramStatus.Text?.StartsWith("The bot token does not look right.", StringComparison.Ordinal) != true) await Task.Delay(50, timeout.Token);
+            Button("Save settings").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            await Task.Delay(100);
+            Require(viewModel.IsSettingsOpen && main.FindControl<TextBlock>("ValidationErrorTextBlock")!.Text?.StartsWith("Phone alerts need a bot token.", StringComparison.Ordinal) == true,
+                "Saving phone alerts without a valid token must be refused with a reason.");
+            Require(_telegram.SentTexts().Length == 1, "An invalid token must not produce a request.");
             await VerifySettingsLayoutAsync(main, 600);
             main.Width = 1180;
             main.Height = 760;
@@ -225,6 +276,10 @@ internal static class UiSmoke
             RowButton(completed, "Resume").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
             while (viewModel.Torrents.Count != 1 || !viewModel.HasNotification) await Task.Delay(50, timeout.Token);
             Require(Button("Open folder").IsVisible && Directory.Exists(viewModel.Notification?.Destination), "Completion must offer the saved folder.");
+            // Cancel discarded the edits above, so the saved bot and chat receive the completion alert.
+            await viewModel.PendingPhoneAlert.WaitAsync(timeout.Token);
+            Require(_telegram.SentTexts().Last() == "Download complete: Completed example" &&
+                    _telegram.Requests.Last().Body.Contains($"\"chat_id\":\"{FakeTelegram.Chat}\""), $"Completion must send one phone alert to the saved chat: {string.Join(" | ", _telegram.SentTexts())}");
             Require(viewModel.SelectedTorrent is null, "Removing the selected row must clear its selection.");
 
             Button("Activity").RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
@@ -244,7 +299,7 @@ internal static class UiSmoke
             var actions = RowButton(row, "Remove");
             var point = actions.TranslatePoint(default, main);
             Require(point is { } location && location.X >= 0 && location.X + actions.Bounds.Width <= main.Bounds.Width, "The row actions overflow at the minimum desktop size.");
-            Console.WriteLine("PASS native UI: selection/actions, diagnostics, in-app settings page, automatic completion/folder notification, activity, expiry, light/dark and minimum desktop size");
+            Console.WriteLine("PASS native UI: selection/actions, diagnostics, in-app settings page, phone alerts (test, detect chat, completion), automatic completion/folder notification, activity, expiry, light/dark and minimum desktop size");
             main.Width = 1180;
             main.Height = 760;
             await VerifyEndToEndAsync(main, viewModel, _fixtureRoot!, timeout.Token);
@@ -263,6 +318,7 @@ internal static class UiSmoke
     }
 
     private static string? _fixtureRoot;
+    private static FakeTelegram? _telegram;
     private static readonly string PipeName = "WASD.FastTorrentDownload.test-" + Guid.NewGuid().ToString("N");
 
     // Exercises the real App (engine, pipe listener, dialogs) with the isolated fixture:
@@ -413,13 +469,13 @@ internal static class UiSmoke
         Require(themePoint is { } location && location.Y >= 0 &&
             location.Y + theme.Bounds.Height <= scroll.Bounds.Height + 1,
             "Scrolling the Settings page must reveal the final appearance control.");
-        foreach (var name in new[] { "DownloadLimitTextBox", "UploadLimitTextBox" })
+        foreach (var name in new[] { "DownloadLimitTextBox", "UploadLimitTextBox", "TelegramTokenTextBox", "TelegramChatTextBox", "TelegramDetectButton", "TelegramTestButton" })
         {
-            var control = main.FindControl<TextBox>(name)!;
+            var control = main.FindControl<Control>(name)!;
             var point = control.TranslatePoint(default, scroll);
-            Require(point is { } position && position.X >= 0 &&
+            Require(point is { } position && position.X >= 0 && control.Bounds.Width > 0 &&
                 position.X + control.Bounds.Width <= scroll.Viewport.Width,
-                "Bandwidth fields must fit inside the Settings page width.");
+                $"{name} must fit inside the Settings page width.");
         }
 
         var save = main.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Save settings"));
@@ -539,8 +595,12 @@ internal static class UiSmoke
         {
             DefaultDownloadFolder = root, ListenPort = listenPort, ListenAddress = "127.0.0.1",
             EnableDht = false, EnablePeerExchange = false, EnablePortForwarding = false,
-            EnableLocalPeerDiscovery = false, Theme = "Dark", ConfirmCloseBeforeExit = false, Language = FixtureLanguage
+            EnableLocalPeerDiscovery = false, Theme = "Dark", ConfirmCloseBeforeExit = false, Language = FixtureLanguage,
+            // Phone alerts go to a loopback stand-in for the Bot API; nothing leaves this PC.
+            TelegramEnabled = true, TelegramBotToken = SecretProtector.Protect(FakeTelegram.Token), TelegramChatId = FakeTelegram.Chat
         });
+        _telegram = new FakeTelegram();
+        TelegramNotifier.ApiBase = _telegram.Base;
         using var engine = new ClientEngine(new EngineSettingsBuilder
         {
             CacheDirectory = paths.CacheDirectory, DhtEndPoint = null, AllowLocalPeerDiscovery = false,

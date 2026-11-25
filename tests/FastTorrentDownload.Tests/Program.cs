@@ -37,6 +37,23 @@ if (Array.IndexOf(args, "--stress-completion") is var completionIndex and >= 0)
     Console.WriteLine($"PASS {rounds} completion stress rounds");
     return 0;
 }
+if (args.Contains("--telegram-live"))
+{
+    // Manual: sends one real completion alert to the bot saved in the installed profile.
+    return await TelegramLiveCheck.RunAsync();
+}
+if (Array.IndexOf(args, "--stress-skipped") is var skippedIndex and >= 0)
+{
+    // Repeats the deselected-file transfers (hidden data, move, late selection) to flush out timing-dependent failures.
+    var rounds = int.TryParse(args.ElementAtOrDefault(skippedIndex + 1), out var parsed) ? parsed : 20;
+    for (var round = 1; round <= rounds; round++)
+    {
+        await SkippedFilesCheck.RunAsync();
+    }
+
+    Console.WriteLine($"PASS {rounds} deselected-file stress rounds");
+    return 0;
+}
 if (Array.IndexOf(args, "--stress-ipv6") is var stressIndex and >= 0)
 {
     // Repeats the two live IPv6 transfers to flush out timing-dependent failures.
@@ -449,7 +466,10 @@ await CheckStalledTorrentFreesQueueSlotAsync();
 await CheckDeadSwarmIsNamedFromTrackerScrapeAsync();
 await CheckTrackersPersistDeleteFilesAndCorruptStateAsync();
 await SilentSeederCheck.RunAsync();
-passed += 7;
+await SparseFileCheck.RunAsync();
+await TelegramCheck.RunAsync();
+await SkippedFilesCheck.RunAsync();
+passed += 10;
 await CheckCompletedRemovalAsync(selectedOnly: true);
 await CheckCompletedRemovalAsync(selectedOnly: false);
 await CheckCompletedRemovalAsync(selectedOnly: true, manualRemoval: true);
